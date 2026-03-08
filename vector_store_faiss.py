@@ -24,21 +24,33 @@ class VectorStoreFAISS:
         """Inicializa o FAISS com persistência local"""
         self.persist_directory = persist_directory
         os.makedirs(persist_directory, exist_ok=True)
-        
-        # Usar embeddings locais com Sentence Transformers
-        self.embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+
+        # Lazy loading: o modelo é carregado apenas na primeira chamada que o exige.
+        # Isso evita bloquear o import/startup por ~60s no Render antes do healthcheck passar.
+        self._embedding_model = None
         self.embedding_dim = 384  # Dimensão do modelo all-MiniLM-L6-v2
-        
+
         # Inicializar índice FAISS
         self.index_path = os.path.join(persist_directory, "faiss_index.bin")
         self.metadata_path = os.path.join(persist_directory, "metadata.pkl")
-        
+
         if os.path.exists(self.index_path) and os.path.exists(self.metadata_path):
             self.load_from_disk()
         else:
             self.index = faiss.IndexFlatL2(self.embedding_dim)
             self.metadata = []
             self.document_texts = []
+
+    @property
+    def embedding_model(self):
+        if self._embedding_model is None:
+            self._embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+        return self._embedding_model
+
+    def warm_up(self):
+        """Pré-carrega o modelo de embeddings. Chamado no startup para mover
+        o carregamento pesado para antes do primeiro request real."""
+        _ = self.embedding_model.encode("warm up")
     
     def _split_text_into_chunks(self, text: str, chunk_size: int = 500, overlap: int = 50) -> List[tuple]:
         """Divide o texto em chunks com sobreposição.

@@ -56,6 +56,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.on_event("startup")
+async def startup_event():
+    """Pré-carrega o modelo de embeddings em background durante o startup.
+    Isso move o carregamento pesado (~60s) para antes do primeiro request,
+    evitando timeout no Render durante o healthcheck inicial."""
+    import asyncio
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, vector_store.warm_up)
+
 # Criar diretório para arquivos temporários
 TEMP_DIR = "temp_uploads"
 os.makedirs(TEMP_DIR, exist_ok=True)
