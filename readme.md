@@ -68,6 +68,58 @@ python run.py
 
 ---
 
+## Fluxo de Ingestao (Recomendado para Producao)
+
+O Render gratuito tem 512MB de RAM — insuficiente para indexar PDFs grandes em tempo real.
+A solucao e **indexar localmente** e commitar o `faiss_db/` gerado.
+
+### Passo a passo
+
+**1. Coloque os PDFs na pasta `./pdfs/`** (ignorada pelo git):
+```bash
+mkdir pdfs
+cp seus-documentos/*.pdf pdfs/
+```
+
+**2. Execute o script de ingestao:**
+```bash
+python ingest.py
+# Para uma pasta diferente:
+python ingest.py --pdf-dir ./minha-pasta
+```
+
+O script pede os metadados de cada PDF interativamente:
+```
+--- bradesco-auto-2024.pdf ---
+Seguradoras disponíveis: Bradesco, Porto Seguro, Azul, ...
+  Seguradora: Bradesco
+  Ano (ex: 2024): 2024
+  Tipo (ex: Geral, Auto, Vida) [Geral]: Auto
+  OK — 312 chunks indexados
+
+==================================================
+Resumo: 1 documento(s), 312 chunks indexados
+Índice salvo em: ./faiss_db
+```
+
+**3. Comite o indice e faca deploy:**
+```bash
+git add faiss_db/
+git commit -m "atualiza indice FAISS"
+git push
+```
+
+O Render detecta o push e faz o deploy automaticamente. O indice
+pre-construido ja estara disponivel quando o container subir.
+
+**4. Em producao, desabilite o upload no dashboard do Render:**
+
+Adicione a variavel de ambiente `ENABLE_UPLOAD=false` — isso retorna
+403 nos endpoints `/upload` e `/admin/upload`, evitando tentativas
+de upload que causariam OOM no servidor.
+
+---
+
 ## Deploy no Render (plano gratuito)
 
 ### Passo a passo
