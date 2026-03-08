@@ -381,6 +381,15 @@
             return div.innerHTML;
         }
 
+        // Evita "Unexpected end of JSON input" quando o servidor retorna
+        // resposta vazia (502/504/OOM no Render). Sempre retorna um objeto.
+        async function safeParseJson(response) {
+            const text = await response.text();
+            if (!text) return { detail: `Erro HTTP ${response.status} (resposta vazia)` };
+            try { return JSON.parse(text); }
+            catch { return { detail: `Resposta invalida do servidor (HTTP ${response.status})` }; }
+        }
+
         // ------------------------------------------------------------------ //
         // Drawer                                                               //
         // ------------------------------------------------------------------ //
@@ -658,7 +667,7 @@
                     body: JSON.stringify(requestBody)
                 });
 
-                const data = await response.json();
+                const data = await safeParseJson(response);
                 document.getElementById('typing-indicator').remove();
 
                 if (data.success) {
@@ -766,8 +775,8 @@
                 const response = await fetch('/upload', { method: 'POST', body: formData });
                 clearInterval(progressInterval);
 
+                const data = await safeParseJson(response);
                 if (response.ok) {
-                    const data = await response.json();
                     updateProgress(100, 'Documento processado com sucesso!');
                     setTimeout(() => {
                         loadStats();
@@ -778,8 +787,7 @@
                         }, 2000);
                     }, 1000);
                 } else {
-                    const error = await response.json();
-                    updateProgress(0, `Erro: ${error.detail}`);
+                    updateProgress(0, `Erro: ${data.detail || `HTTP ${response.status}`}`);
                     confirmUploadBtn.disabled = false;
                     cancelUploadBtn.disabled = false;
                 }
