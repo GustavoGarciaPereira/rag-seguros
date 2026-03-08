@@ -1,0 +1,21 @@
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      # AVISO: Este volume persiste o índice FAISS localmente (desenvolvimento).
+      # No Render (plano gratuito), disco persistente NÃO está disponível — o
+      # faiss_db/ é apagado a cada deploy ou restart. Para persistência real em
+      # produção, use Render Disk (pago) ou migre para um vector store gerenciado
+      # (ex: Pinecone, Qdrant Cloud).
+      - ./faiss_db:/app/faiss_db
+    env_file:
+      - .env
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s

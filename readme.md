@@ -1,100 +1,152 @@
-# 🛡️ Help Corretor - Auditor IA para Seguros
+# Help Corretor — Auditor IA para Seguros
 
-**Help Corretor** é uma plataforma de inteligência artificial baseada em **RAG (Retrieval-Augmented Generation)** projetada para centralizar o conhecimento técnico de diversas seguradoras do mercado em uma interface única, ágil e auditável.
+**Help Corretor** e uma plataforma de inteligencia artificial baseada em **RAG (Retrieval-Augmented Generation)** projetada para centralizar o conhecimento tecnico de diversas seguradoras em uma interface unica, agil e auditavel.
 
-A ferramenta permite que colaboradores de corretoras consultem coberturas, limites e cláusulas complexas de manuais (PDFs) com precisão cirúrgica, eliminando a necessidade de navegar em múltiplos portais e reduzindo drasticamente o tempo de resposta ao cliente.
-
-## 🚀 Diferenciais "Antigravity"
-
-Diferente de assistentes genéricos, o Help Corretor foi construído sob quatro pilares de confiança:
-
-1. **Multi-Seguradora Real:** Suporte a múltiplos manuais com filtros de metadados para evitar o cruzamento de informações entre concorrentes.
-2. **Grounding & Citações:** Cada resposta da IA é acompanhada de evidências no formato `[Seguradora | Pág. X]`.
-3. **Recuperação Profunda (Top-K=10):** Calibrado para localizar "letras miúdas" em tabelas de assistência técnica e anexos de condições especiais.
-4. **Resiliência de Metadados:** Sistema de *fallback* que utiliza o nome do arquivo para citações caso os metadados explícitos estejam ausentes.
+A ferramenta permite que colaboradores de corretoras consultem coberturas, limites e clausulas complexas de manuais (PDFs) com precisao cirurgica, eliminando a necessidade de navegar em multiplos portais.
 
 ---
 
-## 🛠️ Stack Tecnológica
+## Stack Tecnologica
 
-| Tecnologia | Função |
+| Tecnologia | Funcao |
 | --- | --- |
-| **Python 3.10+** | Linguagem base do ecossistema. |
-| **FastAPI** | Framework backend de alta performance e baixa latência. |
-| **FAISS (CPU)** | Banco de dados vetorial local para busca de similaridade eficiente. |
-| **DeepSeek API** | LLM de ponta (OpenAI compatible) para raciocínio lógico e auditoria. |
-| **Sentence-Transformers** | Modelo `all-MiniLM-L6-v2` para geração de embeddings leves. |
+| **FastAPI** | Backend de alta performance |
+| **FAISS (CPU)** | Banco de dados vetorial local |
+| **Sentence-Transformers** | Embeddings (`all-MiniLM-L6-v2`) |
+| **DeepSeek API** | LLM (OpenAI-compatible) para geracao de respostas |
+| **Docker** | Empacotamento e deploy |
 
 ---
 
-## 🏗️ Arquitetura do Sistema
+## Variaveis de Ambiente
 
-O fluxo de dados segue uma esteira de processamento otimizada:
+Crie um arquivo `.env` na raiz do projeto (use `.env.example` como base):
 
-1. **Ingestão:** Upload de PDFs via `/admin/upload` com validação de seguradoras homologadas.
-2. **Fragmentação:** Divisão do texto em *chunks* de 1200 caracteres com 200 de sobreposição (*overlap*).
-3. **Vetorização:** Cada fragmento é convertido em vetor e indexado com metadados de página e seguradora.
-4. **Consulta:** Busca filtrada por seguradora com recuperação dos 10 fragmentos mais relevantes.
-5. **Auditoria:** A IA processa o contexto e gera uma resposta estruturada com referências diretas.
+| Variavel | Obrigatoria | Descricao |
+| --- | --- | --- |
+| `DEEPSEEK_API_KEY` | Sim | Chave de API da DeepSeek |
+| `ADMIN_API_KEY` | Sim | Chave secreta para `POST /admin/upload` |
+| `LOG_LEVEL` | Nao | Nivel de log (`INFO` por padrao) |
+
+Gere uma chave `ADMIN_API_KEY` segura:
+```bash
+python -c "import secrets; print(secrets.token_hex(32))"
+```
 
 ---
 
-## ⚙️ Configuração e Instalação
+## Rodar Localmente com Docker
 
-### 1. Requisitos
-
-* Python 3.10 ou superior.
-* Uma chave de API da DeepSeek.
-
-### 2. Instalação
+**Pre-requisitos:** Docker e Docker Compose instalados.
 
 ```bash
-# Clone o repositório
+# 1. Clone o repositorio
 git clone https://github.com/GustavoGarciaPereira/mvp-seguros-rag.git
-
-# Entre no diretório
 cd mvp-seguros-rag
 
-# Instale as dependências
-pip install -r requirements.txt
+# 2. Configure as variaveis de ambiente
+cp .env.example .env
+# Edite .env com suas chaves reais
 
+# 3. Suba o servico
+docker compose up --build
+
+# A API estara disponivel em http://localhost:8000
 ```
 
-### 3. Variáveis de Ambiente
+O volume `./faiss_db` e montado no container, persistindo o indice FAISS entre restarts locais.
 
-Crie um arquivo `.env` na raiz do projeto:
-
-```env
-DEEPSEEK_API_KEY=sua_chave_aqui
-
-```
-
-### 4. Execução
+### Rodar sem Docker (ambiente virtual)
 
 ```bash
+python -m venv .venv
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+cp .env.example .env        # edite com suas chaves
 python run.py
-
 ```
 
-Acesse `http://localhost:8000` para começar. O chat será desbloqueado automaticamente se houver uma base de dados ativa.
+---
+
+## Deploy no Render (plano gratuito)
+
+### Passo a passo
+
+1. **Fork** este repositorio para sua conta do GitHub.
+
+2. Acesse [render.com](https://render.com) e faca login.
+
+3. Clique em **New > Web Service**.
+
+4. Conecte o repositorio forkado e selecione **Docker** como runtime (o `render.yaml` ja configura isso automaticamente se voce usar **New > Blueprint**).
+
+5. Em **Environment Variables**, adicione:
+   - `DEEPSEEK_API_KEY` — sua chave da DeepSeek
+   - `ADMIN_API_KEY` — chave secreta gerada localmente
+
+6. Clique em **Deploy**. O primeiro build leva alguns minutos (instalacao de dependencias pesadas como faiss e sentence-transformers).
+
+7. Apos o deploy, acesse a URL publica fornecida pelo Render. O healthcheck em `/health` sera verificado automaticamente.
+
+### Usando render.yaml (Blueprint)
+
+O arquivo `render.yaml` na raiz do repositorio descreve o servico como Infrastructure as Code. Para usa-lo:
+
+1. No Render, clique em **New > Blueprint**.
+2. Conecte o repositorio — o Render detectara o `render.yaml` automaticamente.
+3. Defina os valores de `DEEPSEEK_API_KEY` e `ADMIN_API_KEY` quando solicitado.
 
 ---
 
-## 📅 Roadmap de Evolução
+## Limitacoes do Plano Gratuito do Render
 
-* [x] Suporte Multi-Seguradora e Filtros.
-* [x] Sistema de Citações e Grounding.
-* [x] Lógica de Fallback de Metadados.
-* [ ] Painel de Inventário (Lista de manuais ativos).
-* [ ] Backup Automatizado do Índice FAISS para Cloud.
-* [ ] Exportação de Relatório de Auditoria em PDF.
-
----
-
-## 📄 Licença
-
-Distribuído sob a licença MIT. Veja `LICENSE` para mais informações.
+> **Sem persistencia de disco:** O indice FAISS (`faiss_db/`) e armazenado no sistema de arquivos efemero do container. A cada deploy ou restart, o indice e perdido e os documentos precisam ser reenviados via `/upload` ou `/admin/upload`.
+>
+> **Sleep apos inatividade:** O servico dorme apos 15 minutos sem requisicoes. O primeiro request apos o sleep pode demorar **ate 30 segundos** enquanto o container reinicia.
+>
+> **Para persistencia real em producao**, use uma das alternativas:
+> - **Render Disk** (pago) montado em `/app/faiss_db`
+> - Vector store gerenciado: Pinecone, Qdrant Cloud ou similar
 
 ---
 
-**Feito por Gustavo Garcia Pereira** — *Focado em transformar complexidade técnica em agilidade para o corretor.*
+## Endpoints da API
+
+| Metodo | Endpoint | Descricao |
+| --- | --- | --- |
+| `GET` | `/` | Interface web |
+| `GET` | `/health` | Healthcheck |
+| `GET` | `/status` | Verifica se ha documentos indexados |
+| `POST` | `/upload` | Upload publico de PDF |
+| `POST` | `/admin/upload` | Upload com validacao (requer `X-Admin-Key`) |
+| `POST` | `/ask` | Pergunta sobre os documentos |
+| `GET` | `/stats` | Estatisticas do sistema |
+| `GET` | `/metrics` | Metricas operacionais (latencias 24h) |
+
+---
+
+## Arquitetura
+
+1. **Ingestao:** Upload de PDFs com metadados (seguradora, ano, tipo).
+2. **Fragmentacao semantica:** Chunks de 1200 chars com overlap de 200, respeitando limites de clausulas.
+3. **Vetorizacao:** `all-MiniLM-L6-v2` (384 dims) + FAISS `IndexFlatL2`.
+4. **Consulta:** Top-K=10 com reranking hibrido (70% FAISS + 30% sobreposicao de termos).
+5. **Geracao:** DeepSeek `deepseek-chat` com prompt estruturado em 4 secoes (Veredito, Detalhes, Letra Miuda, Prova Documental).
+
+---
+
+## Roadmap
+
+- [x] Suporte multi-seguradora com filtros por metadados
+- [x] Citacoes com pagina de origem `[Seguradora | Pag. X]`
+- [x] Chunking semantico por clausulas
+- [x] Reranking hibrido
+- [x] Metricas operacionais (`/metrics`)
+- [x] Deploy Docker / Render
+- [ ] Painel de inventario de manuais ativos
+- [ ] Backup automatizado do indice FAISS para Cloud Storage
+- [ ] Exportacao de relatorio de auditoria em PDF
+
+---
+
+**Feito por Gustavo Garcia Pereira**

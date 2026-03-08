@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: help-corretor
+    runtime: docker
+    region: oregon
+    plan: free
+    healthCheckPath: /health
+    # AVISO — plano gratuito:
+    #   - Sem disco persistente: o índice FAISS (faiss_db/) é apagado a cada deploy/restart.
+    #   - O serviço dorme após 15 min de inatividade; o primeiro request pode levar ~30s.
+    #   Para persistência real, adicione um Render Disk (pago) montado em /app/faiss_db.
+    envVars:
+      - key: DEEPSEEK_API_KEY
+        sync: false   # valor definido manualmente no dashboard do Render
+      - key: ADMIN_API_KEY
+        sync: false   # valor definido manualmente no dashboard do Render
+      - key: LOG_LEVEL
+        value: INFO
