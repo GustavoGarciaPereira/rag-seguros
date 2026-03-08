@@ -71,6 +71,8 @@ os.makedirs(TEMP_DIR, exist_ok=True)
 
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
 ADMIN_API_KEY = os.getenv("ADMIN_API_KEY")
+# ENABLE_UPLOAD=false desabilita os endpoints de upload (produção com índice pré-construído)
+ENABLE_UPLOAD = os.getenv("ENABLE_UPLOAD", "true").lower() != "false"
 
 # ---------------------------------------------------------------------------
 # Métricas em memória — últimas 24 horas
@@ -145,9 +147,12 @@ async def upload_pdf(
     """
     Endpoint para upload de PDFs com metadados
     """
+    if not ENABLE_UPLOAD:
+        raise HTTPException(status_code=403, detail="Upload desabilitado neste ambiente")
+
     if not file.filename.lower().endswith('.pdf'):
         raise HTTPException(status_code=400, detail="Apenas arquivos PDF são aceitos")
-    
+
     # Preparar metadados
     metadata = {}
     if seguradora: metadata["seguradora"] = seguradora
@@ -207,6 +212,9 @@ async def admin_upload_pdf(
     Endpoint administrativo para upload de documentos com curadoria.
     Requer o header X-Admin-Key com o valor de ADMIN_API_KEY do .env
     """
+    if not ENABLE_UPLOAD:
+        raise HTTPException(status_code=403, detail="Upload desabilitado neste ambiente")
+
     if not ADMIN_API_KEY or x_admin_key != ADMIN_API_KEY:
         raise HTTPException(status_code=401, detail="Chave de administrador inválida ou ausente")
 
