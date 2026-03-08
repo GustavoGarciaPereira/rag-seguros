@@ -1,12 +1,10 @@
 import os
 import pickle
-import numpy as np
 import faiss
 from pypdf import PdfReader
 from sentence_transformers import SentenceTransformer
 import hashlib
 from typing import List, Dict, Any
-import json
 
 class VectorStoreFAISS:
     def __init__(self, persist_directory="./faiss_db"):
@@ -29,39 +27,62 @@ class VectorStoreFAISS:
             self.metadata = []
             self.document_texts = []
     
-    def _split_text_into_chunks(self, text: str, chunk_size: int = 500, overlap: int = 50) -> List[str]:
-        """Divide o texto em chunks com sobreposição"""
+    def _split_text_into_chunks(self, text: str, chunk_size: int = 500, overlap: int = 50) -> List[tuple]:
+        """Divide o texto em chunks com sobreposição.
+        Retorna lista de (chunk_text, start_pos) para permitir cálculo de página por posição."""
         chunks = []
         start = 0
-        
+
         while start < len(text):
             end = start + chunk_size
             chunk = text[start:end]
-            
+
             # Garantir que não cortamos palavras no meio
             if end < len(text) and text[end] != ' ':
                 last_space = chunk.rfind(' ')
                 if last_space != -1:
                     end = start + last_space + 1
                     chunk = text[start:end]
-            
-            chunks.append(chunk.strip())
-            
+
+            chunks.append((chunk.strip(), start))
+
             # Mover para o próximo chunk com sobreposição
             start = end - overlap
-            
+
             # Se chegamos ao final, sair
             if start >= len(text):
                 break
-        
+
         return chunks
     
     def _generate_document_id(self, file_path: str) -> str:
-        """Gera um ID único para o documento"""
+        """Gera um ID único para o documento baseado no conteúdo (hash MD5)"""
         with open(file_path, 'rb') as f:
             content_hash = hashlib.md5(f.read()).hexdigest()
         return f"{os.path.basename(file_path)}_{content_hash[:8]}"
-    
+
+    def _remove_document_chunks(self, doc_id: str) -> int:
+        """Remove todos os chunks de um documento do índice, reconstruindo-o sem eles.
+        Retorna o número de chunks removidos."""
+        keep_mask = [m.get("document_id") != doc_id for m in self.metadata]
+        removed = keep_mask.count(False)
+
+        if removed == 0:
+            return 0
+
+        keep_texts = [t for t, keep in zip(self.document_texts, keep_mask) if keep]
+        keep_metadata = [m for m, keep in zip(self.metadata, keep_mask) if keep]
+
+        # Reconstruir índice FAISS sem os chunks removidos
+        self.index = faiss.IndexFlatL2(self.embedding_dim)
+        if keep_texts:
+            embeddings = self.embedding_model.encode(keep_texts)
+            self.index.add(embeddings.astype('float32'))
+
+        self.metadata = keep_metadata
+        self.document_texts = keep_texts
+        return removed
+
     def add_document(self, file_path: str, metadata_input: Dict[str, Any] = None, chunk_size: int = 1200, overlap: int = 200) -> int:
         """Processa um PDF e adiciona ao banco vetorial com metadados e overlap entre páginas
         
@@ -70,48 +91,63 @@ class VectorStoreFAISS:
             overlap: Sobreposição entre chunks (padrão 200 para continuidade)
         """
         print(f"Processando documento: {file_path}")
-        
+
         if metadata_input is None:
             metadata_input = {}
-            
+
         seguradora = metadata_input.get("seguradora", "Desconhecida")
         ano = metadata_input.get("ano", 0)
         tipo = metadata_input.get("tipo", "Geral")
         
         reader = PdfReader(file_path)
         doc_id = self._generate_document_id(file_path)
-        
+
+        # Deduplicação: remove versão anterior do mesmo documento antes de reindexar
+        removed = self._remove_document_chunks(doc_id)
+        if removed > 0:
+            print(f"Documento já existia — {removed} chunks removidos antes de reindexar.")
+
         all_chunks = []
         all_metadatas = []
         
         # Variável para manter o final da página anterior e garantir overlap entre páginas
         previous_page_tail = ""
-        
+
         for page_num, page in enumerate(reader.pages):
             text = page.extract_text()
             if not text or not text.strip():
                 continue
-            
+
+            # Tamanho do tail: usado para calcular a qual página cada chunk pertence
+            tail_len = len(previous_page_tail)
+
             # Combina o final da página anterior com o texto atual
             current_text = previous_page_tail + text
-            
-            # Dividir a página em chunks com o overlap configurado
+
+            # Dividir em chunks — retorna (chunk_text, start_pos)
             page_chunks = self._split_text_into_chunks(current_text, chunk_size=chunk_size, overlap=overlap)
-            
-            for i, chunk in enumerate(page_chunks):
-                all_chunks.append(chunk)
+
+            for chunk_text, start_pos in page_chunks:
+                # Atribuir página pelo ponto médio do chunk:
+                # se o meio cair dentro do tail, pertence à página anterior; caso contrário, à atual.
+                chunk_mid = start_pos + len(chunk_text) // 2
+                if tail_len > 0 and chunk_mid < tail_len:
+                    assigned_page = page_num          # página anterior (1-indexada)
+                else:
+                    assigned_page = page_num + 1      # página atual (1-indexada)
+
+                all_chunks.append(chunk_text)
                 all_metadatas.append({
                     "source": file_path,
                     "document_id": doc_id,
-                    "page": page_num + 1,
+                    "page": assigned_page,
                     "seguradora": seguradora,
                     "ano": ano,
                     "tipo": tipo,
                     "chunk_index": len(all_chunks) - 1
                 })
-            
+
             # Guarda o final desta página para a próxima (overlap)
-            # Pegamos aproximadamente o dobro do overlap para garantir contexto suficiente
             if len(text) > overlap:
                 previous_page_tail = text[-overlap:]
             else:
@@ -146,7 +182,7 @@ class VectorStoreFAISS:
         
         # Formatar resultados e aplicar filtro
         results = []
-        for i, (idx, distance) in enumerate(zip(indices[0], distances[0])):
+        for idx, distance in zip(indices[0], distances[0]):
             if idx < 0 or idx >= len(self.metadata):
                 continue
                 

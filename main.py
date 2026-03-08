@@ -1,10 +1,11 @@
-from fastapi import FastAPI, File, UploadFile, HTTPException, Form
+from fastapi import FastAPI, File, UploadFile, HTTPException, Form, Header
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
 import os
-import tempfile
-from typing import Optional, Dict, Any
+import uuid
+from typing import Optional, Dict
 
 # Usar FAISS em vez de ChromaDB
 from vector_store_faiss import create_vector_store
@@ -32,6 +33,14 @@ app.add_middleware(
 # Criar diretório para arquivos temporários
 TEMP_DIR = "temp_uploads"
 os.makedirs(TEMP_DIR, exist_ok=True)
+
+MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
+ADMIN_API_KEY = os.getenv("ADMIN_API_KEY")
+
+class AskRequest(BaseModel):
+    question: str = Field(..., min_length=5, max_length=500, description="Pergunta sobre os documentos")
+    top_k: int = Field(default=10, ge=1, le=20, description="Número de trechos a recuperar")
+    filter: Optional[Dict[str, str]] = Field(default=None, description="Filtro de metadados, ex: {'seguradora': 'Bradesco'}")
 
 # Montar pasta estática para o frontend
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -76,21 +85,27 @@ async def upload_pdf(
     if ano: metadata["ano"] = ano
     if tipo: metadata["tipo"] = tipo
     
-    # Salvar arquivo temporariamente
-    temp_path = os.path.join(TEMP_DIR, file.filename)
-    
+    # Salvar arquivo temporariamente com nome seguro (nunca usar file.filename no filesystem)
+    safe_name = f"{uuid.uuid4().hex}.pdf"
+    temp_path = os.path.join(TEMP_DIR, safe_name)
+
     try:
         # Salvar o arquivo
         contents = await file.read()
+        if len(contents) > MAX_FILE_SIZE:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Arquivo muito grande. Limite máximo: {MAX_FILE_SIZE // 1024 // 1024}MB"
+            )
         with open(temp_path, "wb") as f:
             f.write(contents)
-        
+
         # Processar o PDF com metadados
         chunks_added = vector_store.add_document(temp_path, metadata_input=metadata)
-        
+
         # Limpar arquivo temporário
         os.remove(temp_path)
-        
+
         return JSONResponse({
             "success": True,
             "message": f"Documento '{file.filename}' processado com sucesso!",
@@ -98,7 +113,11 @@ async def upload_pdf(
             "filename": file.filename,
             "metadata": metadata
         })
-        
+
+    except HTTPException:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        raise
     except Exception as e:
         if os.path.exists(temp_path):
             os.remove(temp_path)
@@ -112,11 +131,16 @@ async def admin_upload_pdf(
     file: UploadFile = File(...),
     seguradora: str = Form(...),
     ano: int = Form(...),
-    tipo: Optional[str] = Form("Geral")
+    tipo: Optional[str] = Form("Geral"),
+    x_admin_key: str = Header(...)
 ):
     """
-    Endpoint administrativo para upload de documentos com curadoria
+    Endpoint administrativo para upload de documentos com curadoria.
+    Requer o header X-Admin-Key com o valor de ADMIN_API_KEY do .env
     """
+    if not ADMIN_API_KEY or x_admin_key != ADMIN_API_KEY:
+        raise HTTPException(status_code=401, detail="Chave de administrador inválida ou ausente")
+
     if not file.filename.lower().endswith('.pdf'):
         raise HTTPException(status_code=400, detail="Apenas arquivos PDF são aceitos")
     
@@ -134,21 +158,27 @@ async def admin_upload_pdf(
         "tipo": tipo
     }
     
-    # Salvar arquivo temporariamente
-    temp_path = os.path.join(TEMP_DIR, f"admin_{file.filename}")
+    # Salvar arquivo temporariamente com nome seguro (nunca usar file.filename no filesystem)
+    safe_name = f"{uuid.uuid4().hex}.pdf"
+    temp_path = os.path.join(TEMP_DIR, safe_name)
     
     try:
         # Salvar o arquivo
         contents = await file.read()
+        if len(contents) > MAX_FILE_SIZE:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Arquivo muito grande. Limite máximo: {MAX_FILE_SIZE // 1024 // 1024}MB"
+            )
         with open(temp_path, "wb") as f:
             f.write(contents)
-        
+
         # Processar o PDF com metadados
         chunks_added = vector_store.add_document(temp_path, metadata_input=metadata)
-        
+
         # Limpar arquivo temporário
         os.remove(temp_path)
-        
+
         return JSONResponse({
             "success": True,
             "message": f"Documento da {seguradora} processado com sucesso!",
@@ -156,34 +186,26 @@ async def admin_upload_pdf(
             "filename": file.filename,
             "metadata": metadata
         })
-        
+
+    except HTTPException:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        raise
     except Exception as e:
         if os.path.exists(temp_path):
             os.remove(temp_path)
         raise HTTPException(status_code=500, detail=f"Erro ao processar PDF administrativo: {str(e)}")
 
 @app.post("/ask")
-async def ask_question(data: dict):
+async def ask_question(data: AskRequest):
     """
-    Endpoint para fazer perguntas sobre os documentos com suporte a filtro
-    
-    Args:
-        data: {
-            "question": "sua pergunta aqui", 
-            "n_results": 3, 
-            "filter": {"seguradora": "Bradesco"}
-        }
+    Endpoint para fazer perguntas sobre os documentos com suporte a filtro.
+
+    Body: { "question": "...", "top_k": 10, "filter": {"seguradora": "Bradesco"} }
     """
-    question = data.get("question")
-    n_results = data.get("n_results", 3)
-    filter_dict = data.get("filter")
-    
-    if not question:
-        raise HTTPException(status_code=400, detail="A pergunta é obrigatória")
-    
     try:
         # Buscar contexto relevante com filtro
-        context = vector_store.query_documents(question, n_results=n_results, filter_dict=filter_dict)
+        context = vector_store.query_documents(data.question, n_results=data.top_k, filter_dict=data.filter)
         
         if not context:
             return JSONResponse({
@@ -194,7 +216,7 @@ async def ask_question(data: dict):
             })
         
         # Gerar resposta usando a IA
-        answer = llm_service.generate_answer(context, question)
+        answer = llm_service.generate_answer(context, data.question)
         
         # Preparar contexto para retorno
         context_preview = [

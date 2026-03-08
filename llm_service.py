@@ -1,4 +1,5 @@
 import os
+import time
 from openai import OpenAI
 from dotenv import load_dotenv
 
@@ -15,12 +16,14 @@ class LLMService:
         
         self.client = OpenAI(
             api_key=self.api_key,
-            base_url="https://api.deepseek.com"
+            base_url="https://api.deepseek.com",
+            timeout=30.0,  # 30s — evita workers travados em falhas de rede
         )
-        
+
         self.model = "deepseek-chat"
+        self.max_retries = 3
     
-    def generate_answer(self, context, question, max_tokens=1000):
+    def generate_answer(self, context, question, max_tokens=3000):
         """
         Gera uma resposta baseada no contexto fornecido
         
@@ -96,29 +99,35 @@ INSTRUÇÕES DE ANÁLISE:
 - Use o formato de resposta estruturado (4 seções)
 - Cite TODAS as fontes no formato [Seguradora | Pág. X]"""
         
-        try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": system_prompt.format(context=context_text)},
-                    {"role": "user", "content": user_message}
-                ],
-                max_tokens=max_tokens,
-                temperature=0.3,  # Baixa temperatura para respostas mais consistentes
-                stream=False
-            )
-            
-            return response.choices[0].message.content
-            
-        except Exception as e:
-            error_msg = f"Erro ao chamar a API da DeepSeek: {str(e)}"
-            print(error_msg)
-            return f"Desculpe, ocorreu um erro ao processar sua pergunta. Detalhes: {str(e)}"
+        last_error = None
+        for attempt in range(self.max_retries):
+            try:
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": system_prompt.format(context=context_text)},
+                        {"role": "user", "content": user_message}
+                    ],
+                    max_tokens=max_tokens,
+                    temperature=0.3,  # Baixa temperatura para respostas mais consistentes
+                    stream=False
+                )
+                return response.choices[0].message.content
+
+            except Exception as e:
+                last_error = e
+                if attempt < self.max_retries - 1:
+                    wait = 2 ** attempt  # backoff: 1s, 2s
+                    print(f"Tentativa {attempt + 1} falhou ({e}). Aguardando {wait}s antes de tentar novamente...")
+                    time.sleep(wait)
+
+        print(f"Todas as {self.max_retries} tentativas falharam: {last_error}")
+        return f"Desculpe, não foi possível obter resposta após {self.max_retries} tentativas. Tente novamente em instantes."
     
     def test_connection(self):
         """Testa a conexão com a API da DeepSeek"""
         try:
-            response = self.client.chat.completions.create(
+            self.client.chat.completions.create(
                 model=self.model,
                 messages=[{"role": "user", "content": "Responda apenas com 'OK' se estiver funcionando."}],
                 max_tokens=10

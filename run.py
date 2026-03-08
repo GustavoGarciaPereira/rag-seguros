@@ -5,7 +5,6 @@ Script para executar o servidor Bradesco Insurance RAG Assistant
 
 import os
 import sys
-import subprocess
 import webbrowser
 from dotenv import load_dotenv
 
@@ -15,10 +14,10 @@ def check_dependencies():
         'fastapi',
         'uvicorn',
         'pypdf',
-        'chromadb',
-        'sentence-transformers',
+        'faiss',
+        'sentence_transformers',
         'openai',
-        'python-dotenv'
+        'dotenv'
     ]
     
     missing_packages = []
@@ -49,7 +48,7 @@ def setup_environment():
 
 def create_directories():
     """Cria diretórios necessários"""
-    directories = ['temp_uploads', 'chroma_db', 'static']
+    directories = ['temp_uploads', 'static']
     
     for directory in directories:
         if not os.path.exists(directory):
