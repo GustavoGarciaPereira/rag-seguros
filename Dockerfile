@@ -12,8 +12,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
-# Copia e instala dependências Python antes do código-fonte (aproveita cache de camadas)
+# Instala torch CPU-only ANTES do requirements.txt para evitar download de ~2GB de pacotes CUDA.
+# Sem isso, pip resolve torch com suporte NVIDIA e estoura a memória do Render (512MB).
+RUN pip install --no-cache-dir \
+    torch==2.2.0+cpu \
+    --index-url https://download.pytorch.org/whl/cpu
+
 COPY requirements.txt .
+
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copia o restante do projeto
