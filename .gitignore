@@ -1,0 +1,8 @@
+.env
+.vscode/settings.json
+__*.pyc
+__pycache__/ingestion.cpython-312.pyc
+__pycache__/llm_service.cpython-312.pyc
+__pycache__/main.cpython-312.pyc
+__pycache__/rag_engine.cpython-312.pyc
+__pycache__/vector_store_faiss.cpython-312.pyc

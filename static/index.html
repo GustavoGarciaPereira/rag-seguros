@@ -1,0 +1,729 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bradesco Insurance Assistant</title>
+    <!-- Tailwind CSS via CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Font Awesome para ícones -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        /* Estilos personalizados */
+        .chat-message-user {
+            background-color: #3b82f6;
+            color: white;
+            border-radius: 18px 18px 4px 18px;
+            margin-left: auto;
+        }
+
+        .chat-message-assistant {
+            background-color: #f3f4f6;
+            color: #1f2937;
+            border-radius: 18px 18px 18px 4px;
+            margin-right: auto;
+        }
+
+        .chat-message-system {
+            background-color: #fef3c7;
+            color: #92400e;
+            border-radius: 12px;
+            margin: 0 auto;
+            font-size: 0.9rem;
+        }
+
+        .scrollbar-thin {
+            scrollbar-width: thin;
+            scrollbar-color: #cbd5e1 #f1f5f9;
+        }
+
+        .scrollbar-thin::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .scrollbar-thin::-webkit-scrollbar-track {
+            background: #f1f5f9;
+        }
+
+        .scrollbar-thin::-webkit-scrollbar-thumb {
+            background-color: #cbd5e1;
+            border-radius: 20px;
+        }
+
+        .fade-in {
+            animation: fadeIn 0.3s ease-in;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+    </style>
+</head>
+
+<body class="bg-gray-50 min-h-screen">
+    <div class="container mx-auto max-w-6xl p-4">
+        <!-- Cabeçalho -->
+        <header class="bg-white rounded-xl shadow-md p-6 mb-6">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center space-x-4">
+                    <div class="bg-blue-600 p-3 rounded-lg">
+                        <i class="fas fa-shield-alt text-white text-2xl"></i>
+                    </div>
+                    <div>
+                        <h1 class="text-2xl font-bold text-gray-800">Bradesco Insurance Assistant</h1>
+                        <p class="text-gray-600">Assistente de IA para análise de apólices de seguro</p>
+                    </div>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <div id="connection-status" class="flex items-center space-x-2">
+                        <div class="w-3 h-3 rounded-full bg-red-500 animate-pulse"></div>
+                        <span class="text-sm text-gray-600">Conectando...</span>
+                    </div>
+                    <button id="upload-btn"
+                        class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center space-x-2 transition duration-200">
+                        <i class="fas fa-upload"></i>
+                        <span>Upload PDF</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Upload Modal (hidden by default) -->
+            <div id="upload-modal"
+                class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                <div class="bg-white rounded-xl shadow-2xl w-full max-w-md p-6">
+                    <div class="flex justify-between items-center mb-4">
+                        <h2 class="text-xl font-bold text-gray-800">Upload de Documento</h2>
+                        <button id="close-modal" class="text-gray-500 hover:text-gray-700">
+                            <i class="fas fa-times text-xl"></i>
+                        </button>
+                    </div>
+
+                    <div
+                        class="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center mb-4 hover:border-blue-500 transition duration-200">
+                        <i class="fas fa-file-pdf text-4xl text-red-500 mb-4"></i>
+                        <p class="text-gray-600 mb-2">Arraste e solte seu PDF aqui</p>
+                        <p class="text-sm text-gray-500 mb-4">ou</p>
+                        <input type="file" id="pdf-file" accept=".pdf" class="hidden">
+                        <label for="pdf-file"
+                            class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg cursor-pointer inline-block">
+                            Selecione um arquivo
+                        </label>
+                        <p class="text-xs text-gray-500 mt-4">Apenas arquivos PDF são aceitos</p>
+                    </div>
+
+                    <div id="upload-progress" class="hidden">
+                        <div class="flex items-center justify-between mb-2">
+                            <span class="text-sm font-medium text-gray-700">Processando...</span>
+                            <span id="progress-percent" class="text-sm font-medium text-blue-600">0%</span>
+                        </div>
+                        <div class="w-full bg-gray-200 rounded-full h-2">
+                            <div id="progress-bar" class="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                                style="width: 0%"></div>
+                        </div>
+                        <p id="upload-status" class="text-sm text-gray-600 mt-2"></p>
+                    </div>
+
+                    <div id="selected-file" class="hidden p-3 bg-gray-50 rounded-lg mb-4">
+                        <div class="flex items-center justify-between">
+                            <div class="flex items-center space-x-3">
+                                <i class="fas fa-file-pdf text-red-500"></i>
+                                <div>
+                                    <p id="file-name" class="font-medium text-gray-800"></p>
+                                    <p id="file-size" class="text-xs text-gray-500"></p>
+                                </div>
+                            </div>
+                            <button id="remove-file" class="text-red-500 hover:text-red-700">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="flex justify-end space-x-3">
+                        <button id="cancel-upload" class="px-4 py-2 text-gray-600 hover:text-gray-800">
+                            Cancelar
+                        </button>
+                        <button id="confirm-upload"
+                            class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                            disabled>
+                            Enviar Documento
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <!-- Conteúdo Principal -->
+        <div class="flex flex-col lg:flex-row gap-6">
+            <!-- Painel Lateral -->
+            <div class="lg:w-1/3">
+                <div class="bg-white rounded-xl shadow-md p-6 mb-6">
+                    <h2 class="text-lg font-bold text-gray-800 mb-4 flex items-center">
+                        <i class="fas fa-info-circle text-blue-500 mr-2"></i>
+                        Como usar
+                    </h2>
+                    <ul class="space-y-3">
+                        <li class="flex items-start">
+                            <div class="bg-blue-100 text-blue-600 p-1 rounded mr-3">
+                                <i class="fas fa-upload text-sm"></i>
+                            </div>
+                            <span class="text-gray-700">Faça upload de uma apólice ou documento de seguro em PDF</span>
+                        </li>
+                        <li class="flex items-start">
+                            <div class="bg-blue-100 text-blue-600 p-1 rounded mr-3">
+                                <i class="fas fa-question-circle text-sm"></i>
+                            </div>
+                            <span class="text-gray-700">Faça perguntas sobre coberturas, franquias, prazos, etc.</span>
+                        </li>
+                        <li class="flex items-start">
+                            <div class="bg-blue-100 text-blue-600 p-1 rounded mr-3">
+                                <i class="fas fa-robot text-sm"></i>
+                            </div>
+                            <span class="text-gray-700">A IA responderá baseada apenas no documento carregado</span>
+                        </li>
+                    </ul>
+                </div>
+
+                <div class="bg-white rounded-xl shadow-md p-6">
+                    <h2 class="text-lg font-bold text-gray-800 mb-4 flex items-center">
+                        <i class="fas fa-chart-bar text-green-500 mr-2"></i>
+                        Estatísticas do Sistema
+                    </h2>
+                    <div id="stats-content" class="space-y-4">
+                        <div class="flex justify-between items-center">
+                            <span class="text-gray-600">Documentos processados:</span>
+                            <span id="doc-count" class="font-bold">0</span>
+                        </div>
+                        <div class="flex justify-between items-center">
+                            <span class="text-gray-600">Trechos indexados:</span>
+                            <span id="chunk-count" class="font-bold">0</span>
+                        </div>
+                        <div class="flex justify-between items-center">
+                            <span class="text-gray-600">Status da IA:</span>
+                            <span id="ai-status" class="font-bold text-red-500">Desconectado</span>
+                        </div>
+                    </div>
+                    <button id="refresh-stats"
+                        class="w-full mt-4 bg-gray-100 hover:bg-gray-200 text-gray-800 py-2 rounded-lg flex items-center justify-center space-x-2 transition duration-200">
+                        <i class="fas fa-sync-alt"></i>
+                        <span>Atualizar Estatísticas</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Área do Chat -->
+            <div class="lg:w-2/3 flex flex-col">
+                <div class="bg-white rounded-xl shadow-md flex-grow flex flex-col">
+                    <!-- Cabeçalho do Chat -->
+                    <div class="p-4 border-b">
+                        <h2 class="text-lg font-bold text-gray-800 flex items-center">
+                            <i class="fas fa-comments text-blue-500 mr-2"></i>
+                            Assistente de Seguros
+                        </h2>
+                        <p class="text-sm text-gray-600">Faça perguntas sobre seus documentos de seguro</p>
+                    </div>
+
+                    <!-- Mensagens do Chat -->
+                    <div id="chat-messages" class="flex-grow p-4 overflow-y-auto scrollbar-thin max-h-[500px]">
+                        <!-- Mensagem de boas-vindas -->
+                        <div class="chat-message-system max-w-md mx-auto p-3 mb-4 text-center fade-in">
+                            <i class="fas fa-robot mr-2"></i>
+                            Olá! Sou seu assistente de seguros da Bradesco. Faça upload de um documento PDF e faça
+                            perguntas sobre ele.
+                        </div>
+                    </div>
+
+                    <!-- Input do Chat -->
+                    <div class="p-4 border-t">
+                        <div class="flex space-x-2">
+                            <input type="text" id="chat-input" placeholder="Digite sua pergunta sobre o documento..."
+                                class="flex-grow p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                disabled>
+                            <button id="send-btn"
+                                class="bg-blue-600 hover:bg-blue-700 text-white p-3 rounded-lg transition duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                                disabled>
+                                <i class="fas fa-paper-plane"></i>
+                            </button>
+                        </div>
+                        <p id="input-hint" class="text-sm text-gray-500 mt-2">
+                            <i class="fas fa-info-circle mr-1"></i>
+                            Faça upload de um documento primeiro para habilitar o chat
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Rodapé -->
+        <footer class="mt-6 text-center text-gray-500 text-sm">
+            <p>Bradesco Insurance Assistant v1.0 • Desenvolvido para análise de apólices usando IA</p>
+            <p class="mt-1">© 2024 Bradesco Seguros. Todos os direitos reservados.</p>
+        </footer>
+    </div>
+
+    <script>
+        // Elementos do DOM
+        const chatMessages = document.getElementById('chat-messages');
+        const chatInput = document.getElementById('chat-input');
+        const sendBtn = document.getElementById('send-btn');
+        const uploadBtn = document.getElementById('upload-btn');
+        const uploadModal = document.getElementById('upload-modal');
+        const closeModal = document.getElementById('close-modal');
+        const pdfFileInput = document.getElementById('pdf-file');
+        const confirmUploadBtn = document.getElementById('confirm-upload');
+        const cancelUploadBtn = document.getElementById('cancel-upload');
+        const removeFileBtn = document.getElementById('remove-file');
+        const selectedFileDiv = document.getElementById('selected-file');
+        const uploadProgress = document.getElementById('upload-progress');
+        const progressBar = document.getElementById('progress-bar');
+        const progressPercent = document.getElementById('progress-percent');
+        const uploadStatus = document.getElementById('upload-status');
+        const refreshStatsBtn = document.getElementById('refresh-stats');
+        const connectionStatus = document.getElementById('connection-status');
+
+        // Variáveis de estado
+        let selectedFile = null;
+        let isProcessing = false;
+
+        // Inicialização
+        document.addEventListener('DOMContentLoaded', function () {
+            checkConnection();
+            loadStats();
+            checkInitialStatus();
+        });
+
+        // Verificar status inicial (se já existem documentos)
+        async function checkInitialStatus() {
+            try {
+                const response = await fetch('/status');
+                const data = await response.json();
+
+                if (data.ready) {
+                    enableChat();
+                }
+            } catch (error) {
+                console.error("Erro ao verificar status inicial", error);
+            }
+        }
+
+        // Verificar conexão com o servidor
+        async function checkConnection() {
+            try {
+                const response = await fetch('/health');
+                if (response.ok) {
+                    updateConnectionStatus(true);
+                } else {
+                    updateConnectionStatus(false);
+                }
+            } catch (error) {
+                console.error('Erro na conexão:', error);
+                updateConnectionStatus(false);
+            }
+        }
+
+        // Atualizar status da conexão
+        function updateConnectionStatus(connected) {
+            const statusDot = connectionStatus.querySelector('div');
+            const statusText = connectionStatus.querySelector('span');
+
+            if (connected) {
+                statusDot.className = 'w-3 h-3 rounded-full bg-green-500';
+                statusText.textContent = 'Conectado';
+                statusText.className = 'text-sm text-green-600';
+            } else {
+                statusDot.className = 'w-3 h-3 rounded-full bg-red-500 animate-pulse';
+                statusText.textContent = 'Desconectado';
+                statusText.className = 'text-sm text-red-600';
+            }
+        }
+
+        // Carregar estatísticas
+        async function loadStats() {
+            try {
+                const response = await fetch('/stats');
+                const data = await response.json();
+
+                document.getElementById('chunk-count').textContent = data.vector_store.total_chunks || 0;
+                document.getElementById('doc-count').textContent = data.vector_store.total_chunks > 0 ? '1+' : '0';
+
+                const aiStatus = document.getElementById('ai-status');
+                if (data.llm_service.status === 'connected') {
+                    aiStatus.textContent = 'Conectado';
+                    aiStatus.className = 'font-bold text-green-500';
+                } else {
+                    aiStatus.textContent = 'Desconectado';
+                    aiStatus.className = 'font-bold text-red-500';
+                }
+            } catch (error) {
+                console.error('Erro ao carregar estatísticas:', error);
+            }
+        }
+
+        // Habilitar chat
+        function enableChat() {
+            if (!chatInput.disabled) return; // Já habilitado
+
+            chatInput.disabled = false;
+            sendBtn.disabled = false;
+            document.getElementById('input-hint').innerHTML = '<i class="fas fa-check-circle mr-1 text-green-500"></i> Chat habilitado! Faça sua pergunta.';
+            chatInput.placeholder = "Ex: Qual é o valor da franquia?";
+
+            // Adicionar mensagem do sistema
+            addSystemMessage('Chat habilitado! Você pode fazer perguntas sobre o documento carregado.');
+        }
+
+        // Adicionar mensagem ao chat
+        function addMessage(content, sender, isSystem = false) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `mb-3 max-w-[80%] p-4 fade-in ${isSystem ? 'chat-message-system' : (sender === 'user' ? 'chat-message-user' : 'chat-message-assistant')}`;
+
+            if (sender === 'assistant') {
+                messageDiv.innerHTML = `
+                    <div class="flex items-start space-x-3">
+                        <div class="bg-blue-100 text-blue-600 p-2 rounded-full">
+                            <i class="fas fa-robot"></i>
+                        </div>
+                        <div class="flex-grow">
+                            <div class="font-medium text-gray-700 mb-1">Assistente Bradesco</div>
+                            <div class="text-gray-800 whitespace-pre-wrap">${content}</div>
+                        </div>
+                    </div>
+                `;
+            } else if (sender === 'user') {
+                messageDiv.innerHTML = `
+                    <div class="flex items-start space-x-3 flex-row-reverse">
+                        <div class="bg-blue-600 text-white p-2 rounded-full">
+                            <i class="fas fa-user"></i>
+                        </div>
+                        <div class="flex-grow text-right">
+                            <div class="font-medium text-white mb-1">Você</div>
+                            <div class="text-white whitespace-pre-wrap">${content}</div>
+                        </div>
+                    </div>
+                `;
+            } else {
+                messageDiv.innerHTML = `
+                    <div class="flex items-center space-x-2">
+                        <i class="fas fa-info-circle text-yellow-500"></i>
+                        <div class="text-sm">${content}</div>
+                    </div>
+                `;
+            }
+
+            chatMessages.appendChild(messageDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        // Adicionar mensagem do sistema
+        function addSystemMessage(content) {
+            addMessage(content, 'system', true);
+        }
+
+        // Enviar pergunta
+        async function sendQuestion() {
+            const question = chatInput.value.trim();
+            if (!question || isProcessing) return;
+
+            // Adicionar mensagem do usuário
+            addMessage(question, 'user');
+            chatInput.value = '';
+
+            // Mostrar indicador de digitação
+            const typingIndicator = document.createElement('div');
+            typingIndicator.id = 'typing-indicator';
+            typingIndicator.className = 'chat-message-assistant mb-3 max-w-[80%] p-4';
+            typingIndicator.innerHTML = `
+                <div class="flex items-center space-x-3">
+                    <div class="bg-blue-100 text-blue-600 p-2 rounded-full">
+                        <i class="fas fa-robot"></i>
+                    </div>
+                    <div class="flex-grow">
+                        <div class="font-medium text-gray-700 mb-1">Assistente Bradesco</div>
+                        <div class="text-gray-600 flex items-center space-x-2">
+                            <div class="flex space-x-1">
+                                <div class="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
+                                <div class="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style="animation-delay: 0.1s"></div>
+                                <div class="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style="animation-delay: 0.2s"></div>
+                            </div>
+                            <span>Processando sua pergunta...</span>
+                        </div>
+                    </div>
+                </div>
+            `;
+            chatMessages.appendChild(typingIndicator);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+
+            isProcessing = true;
+            sendBtn.disabled = true;
+
+            try {
+                const response = await fetch('/ask', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ question: question })
+                });
+
+                const data = await response.json();
+
+                // Remover indicador de digitação
+                document.getElementById('typing-indicator').remove();
+
+                if (data.success) {
+                    addMessage(data.answer, 'assistant');
+
+                    // Mostrar contexto usado (se houver)
+                    if (data.has_context && data.context_used.length > 0) {
+                        const contextInfo = document.createElement('div');
+                        contextInfo.className = 'text-xs text-gray-500 mt-2 text-center';
+                        contextInfo.innerHTML = `
+                            <i class="fas fa-search mr-1"></i>
+                            Baseado em ${data.context_count} trecho(s) do documento
+                            <button id="show-context-btn" class="ml-2 text-blue-500 hover:text-blue-700 underline">
+                                Ver detalhes
+                            </button>
+                            <div id="context-details" class="hidden mt-2 p-3 bg-gray-50 rounded-lg text-left">
+                                ${data.context_used.map((ctx, i) => `
+                                    <div class="mb-2">
+                                        <div class="font-medium">Trecho ${i + 1} (Relevância: ${ctx.relevance_score})</div>
+                                        <div class="text-gray-600 text-sm">${ctx.text}</div>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        `;
+
+                        const lastMessage = chatMessages.lastElementChild;
+                        lastMessage.appendChild(contextInfo);
+
+                        // Adicionar evento para mostrar/ocultar detalhes
+                        setTimeout(() => {
+                            const showContextBtn = document.getElementById('show-context-btn');
+                            const contextDetails = document.getElementById('context-details');
+
+                            showContextBtn.addEventListener('click', () => {
+                                contextDetails.classList.toggle('hidden');
+                                showContextBtn.textContent = contextDetails.classList.contains('hidden')
+                                    ? 'Ver detalhes'
+                                    : 'Ocultar detalhes';
+                            });
+                        }, 100);
+                    }
+                } else {
+                    addMessage('Desculpe, ocorreu um erro ao processar sua pergunta.', 'assistant');
+                }
+            } catch (error) {
+                console.error('Erro:', error);
+                document.getElementById('typing-indicator')?.remove();
+                addMessage('Erro de conexão com o servidor. Verifique se o servidor está rodando.', 'assistant');
+            } finally {
+                isProcessing = false;
+                sendBtn.disabled = false;
+                chatInput.focus();
+            }
+        }
+
+        // Upload de arquivo
+        pdfFileInput.addEventListener('change', function (e) {
+            const file = e.target.files[0];
+            if (file && file.type === 'application/pdf') {
+                selectedFile = file;
+
+                // Mostrar informações do arquivo
+                document.getElementById('file-name').textContent = file.name;
+                document.getElementById('file-size').textContent = formatFileSize(file.size);
+                selectedFileDiv.classList.remove('hidden');
+                confirmUploadBtn.disabled = false;
+            } else {
+                alert('Por favor, selecione um arquivo PDF válido.');
+                pdfFileInput.value = '';
+            }
+        });
+
+        // Remover arquivo selecionado
+        removeFileBtn.addEventListener('click', function () {
+            selectedFile = null;
+            pdfFileInput.value = '';
+            selectedFileDiv.classList.add('hidden');
+            confirmUploadBtn.disabled = true;
+        });
+
+        // Confirmar upload
+        confirmUploadBtn.addEventListener('click', async function () {
+            if (!selectedFile) return;
+
+            const formData = new FormData();
+            formData.append('file', selectedFile);
+
+            // Mostrar progresso
+            uploadProgress.classList.remove('hidden');
+            confirmUploadBtn.disabled = true;
+            cancelUploadBtn.disabled = true;
+
+            // Simular progresso
+            let progress = 0;
+            const progressInterval = setInterval(() => {
+                progress += 5;
+                if (progress > 90) {
+                    clearInterval(progressInterval);
+                }
+                updateProgress(progress, 'Processando documento...');
+            }, 200);
+
+            try {
+                const response = await fetch('/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                clearInterval(progressInterval);
+
+                if (response.ok) {
+                    const data = await response.json();
+                    updateProgress(100, 'Documento processado com sucesso!');
+
+                    // Atualizar estatísticas
+                    setTimeout(() => {
+                        loadStats();
+                        enableChat();
+
+                        // Fechar modal após 2 segundos
+                        setTimeout(() => {
+                            closeUploadModal();
+                            addSystemMessage(`Documento "${data.filename}" carregado com sucesso! ${data.chunks_added} trechos indexados.`);
+                        }, 2000);
+                    }, 1000);
+                } else {
+                    const error = await response.json();
+                    updateProgress(0, `Erro: ${error.detail}`);
+                    confirmUploadBtn.disabled = false;
+                    cancelUploadBtn.disabled = false;
+                }
+            } catch (error) {
+                clearInterval(progressInterval);
+                updateProgress(0, `Erro de conexão: ${error.message}`);
+                confirmUploadBtn.disabled = false;
+                cancelUploadBtn.disabled = false;
+            }
+        });
+
+        // Atualizar barra de progresso
+        function updateProgress(percent, message) {
+            progressBar.style.width = `${percent}%`;
+            progressPercent.textContent = `${percent}%`;
+            uploadStatus.textContent = message;
+        }
+
+        // Formatar tamanho do arquivo
+        function formatFileSize(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+
+        // Abrir modal de upload
+        uploadBtn.addEventListener('click', function () {
+            uploadModal.classList.remove('hidden');
+            document.body.style.overflow = 'hidden';
+        });
+
+        // Fechar modal de upload
+        function closeUploadModal() {
+            uploadModal.classList.add('hidden');
+            document.body.style.overflow = 'auto';
+
+            // Resetar estado
+            selectedFile = null;
+            pdfFileInput.value = '';
+            selectedFileDiv.classList.add('hidden');
+            uploadProgress.classList.add('hidden');
+            confirmUploadBtn.disabled = true;
+            cancelUploadBtn.disabled = false;
+            updateProgress(0, '');
+        }
+
+        closeModal.addEventListener('click', closeUploadModal);
+        cancelUploadBtn.addEventListener('click', closeUploadModal);
+
+        // Fechar modal ao clicar fora
+        uploadModal.addEventListener('click', function (e) {
+            if (e.target === uploadModal) {
+                closeUploadModal();
+            }
+        });
+
+        // Atualizar estatísticas
+        refreshStatsBtn.addEventListener('click', loadStats);
+
+        // Enviar pergunta ao pressionar Enter
+        chatInput.addEventListener('keypress', function (e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendQuestion();
+            }
+        });
+
+        // Enviar pergunta ao clicar no botão
+        sendBtn.addEventListener('click', sendQuestion);
+
+        // Permitir arrastar e soltar arquivos
+        const dropZone = uploadModal.querySelector('.border-dashed');
+
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+            dropZone.addEventListener(eventName, preventDefaults, false);
+        });
+
+        function preventDefaults(e) {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+
+        ['dragenter', 'dragover'].forEach(eventName => {
+            dropZone.addEventListener(eventName, highlight, false);
+        });
+
+        ['dragleave', 'drop'].forEach(eventName => {
+            dropZone.addEventListener(eventName, unhighlight, false);
+        });
+
+        function highlight() {
+            dropZone.classList.add('border-blue-500', 'bg-blue-50');
+        }
+
+        function unhighlight() {
+            dropZone.classList.remove('border-blue-500', 'bg-blue-50');
+        }
+
+        dropZone.addEventListener('drop', function (e) {
+            const dt = e.dataTransfer;
+            const files = dt.files;
+
+            if (files.length > 0) {
+                const file = files[0];
+                if (file.type === 'application/pdf') {
+                    // Criar um DataTransfer para simular a seleção de arquivo
+                    const dataTransfer = new DataTransfer();
+                    dataTransfer.items.add(file);
+                    pdfFileInput.files = dataTransfer.files;
+
+                    // Disparar evento change
+                    pdfFileInput.dispatchEvent(new Event('change'));
+                } else {
+                    alert('Por favor, solte apenas arquivos PDF.');
+                }
+            }
+        });
+    </script>
+</body>
+
+</html>
