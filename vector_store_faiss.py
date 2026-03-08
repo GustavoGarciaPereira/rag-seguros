@@ -1,10 +1,23 @@
 import os
+import re
 import pickle
 import faiss
 from pypdf import PdfReader
 from sentence_transformers import SentenceTransformer
 import hashlib
 from typing import List, Dict, Any
+
+# Padrão para detectar limites semânticos em apólices de seguros
+_CLAUSE_BOUNDARY = re.compile(
+    r'\n{2,}'                                               # parágrafo duplo
+    r'|\n(?=[ \t]*(?:'
+    r'\d+(?:\.\d+)*\.?[ \t]'                               # cláusulas numeradas: "1.", "3.2."
+    r'|Art\.?[ \t]|Artigo[ \t]'                            # artigos
+    r'|SEÇ[AÃ]O\b|CAP[IÍ]TULO\b|CL[AÁ]USULA\b'          # seções
+    r'|COBERTURA\b|EXCLUS[AÃ]O\b|FRANQUIA\b'              # blocos de apólice
+    r'))',
+    re.IGNORECASE,
+)
 
 class VectorStoreFAISS:
     def __init__(self, persist_directory="./faiss_db"):
@@ -55,6 +68,68 @@ class VectorStoreFAISS:
 
         return chunks
     
+    def _split_text_semantically(self, text: str, chunk_size: int = 1200, overlap: int = 200) -> List[tuple]:
+        """Chunking semântico heurístico para apólices de seguros.
+
+        Divide o texto nos limites naturais do documento (parágrafos, cláusulas numeradas,
+        seções) antes de recorrer ao corte fixo por caractere. Isso mantém cláusulas
+        inteiras no mesmo chunk, melhorando a precisão das citações.
+
+        Retorna lista de (chunk_text, start_pos) — mesma interface de _split_text_into_chunks.
+        """
+        # Encontrar posições dos limites semânticos
+        segments: List[tuple] = []
+        last = 0
+        for m in _CLAUSE_BOUNDARY.finditer(text):
+            seg = text[last:m.start()].strip()
+            if seg:
+                segments.append((seg, last))
+            last = m.end()
+        if last < len(text):
+            seg = text[last:].strip()
+            if seg:
+                segments.append((seg, last))
+
+        if not segments:
+            return self._split_text_into_chunks(text, chunk_size, overlap)
+
+        # Agrupar segmentos em chunks respeitando chunk_size, com overlap
+        chunks: List[tuple] = []
+        current_parts: List[str] = []
+        current_start = 0
+        current_len = 0
+
+        for seg_text, seg_pos in segments:
+            if len(seg_text) > chunk_size:
+                # Segmento isolado muito grande: fechar acumulado e subdividir
+                if current_parts:
+                    chunk = "\n\n".join(current_parts)
+                    chunks.append((chunk, current_start))
+                    current_parts, current_len = [], 0
+                for sub_text, sub_pos in self._split_text_into_chunks(seg_text, chunk_size, overlap):
+                    chunks.append((sub_text, seg_pos + sub_pos))
+                current_start = 0
+                continue
+
+            if current_len + len(seg_text) + 2 > chunk_size and current_parts:
+                # Fechar chunk atual e iniciar novo com overlap
+                chunk = "\n\n".join(current_parts)
+                chunks.append((chunk, current_start))
+                overlap_text = chunk[-overlap:] if len(chunk) > overlap else chunk
+                current_parts = [overlap_text, seg_text]
+                current_start = seg_pos           # posição do novo conteúdo
+                current_len = len(overlap_text) + len(seg_text) + 2
+            else:
+                if not current_parts:
+                    current_start = seg_pos
+                current_parts.append(seg_text)
+                current_len += len(seg_text) + 2
+
+        if current_parts:
+            chunks.append(("\n\n".join(current_parts), current_start))
+
+        return chunks if chunks else self._split_text_into_chunks(text, chunk_size, overlap)
+
     def _generate_document_id(self, file_path: str) -> str:
         """Gera um ID único para o documento baseado no conteúdo (hash MD5)"""
         with open(file_path, 'rb') as f:
@@ -124,8 +199,8 @@ class VectorStoreFAISS:
             # Combina o final da página anterior com o texto atual
             current_text = previous_page_tail + text
 
-            # Dividir em chunks — retorna (chunk_text, start_pos)
-            page_chunks = self._split_text_into_chunks(current_text, chunk_size=chunk_size, overlap=overlap)
+            # Dividir em chunks semânticos — retorna (chunk_text, start_pos)
+            page_chunks = self._split_text_semantically(current_text, chunk_size=chunk_size, overlap=overlap)
 
             for chunk_text, start_pos in page_chunks:
                 # Atribuir página pelo ponto médio do chunk:
@@ -166,6 +241,29 @@ class VectorStoreFAISS:
         self.save_to_disk()
         return len(all_chunks)
     
+    def _rerank_results(self, query_text: str, results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Reranking leve: combina score FAISS (70%) com sobreposição de termos da query (30%).
+
+        Melhora a recuperação de termos específicos de seguros (valores em R$, nomes de
+        coberturas) que podem ter baixo score semântico por embeddings genéricos.
+        """
+        _STOPWORDS_PT = {
+            'de', 'da', 'do', 'das', 'dos', 'e', 'em', 'o', 'a', 'os', 'as',
+            'que', 'por', 'com', 'para', 'se', 'um', 'uma', 'no', 'na', 'nos',
+            'nas', 'ao', 'aos', 'é', 'são', 'foi', 'ser', 'ter', 'mais', 'mas',
+            'ou', 'também', 'não', 'sim', 'já', 'como', 'quando', 'seu', 'sua',
+        }
+        query_terms = set(re.sub(r'[^\w\s]', '', query_text.lower()).split()) - _STOPWORDS_PT
+        if not query_terms:
+            return results
+
+        for result in results:
+            text_terms = set(re.sub(r'[^\w\s]', '', result['text'].lower()).split())
+            overlap = len(query_terms & text_terms) / len(query_terms)
+            result['relevance_score'] = 0.7 * result['relevance_score'] + 0.3 * overlap
+
+        return sorted(results, key=lambda x: x['relevance_score'], reverse=True)
+
     def query_documents(self, query_text: str, n_results: int = 10, filter_dict: Dict[str, Any] = None) -> List[Dict[str, Any]]:
         """Busca documentos relevantes (Top-K=10 para análise profunda de manuais densos)"""
         if self.index.ntotal == 0:
@@ -211,8 +309,8 @@ class VectorStoreFAISS:
             # Se já atingimos o número solicitado de resultados após o filtro, paramos
             if len(results) >= n_results:
                 break
-        
-        return results
+
+        return self._rerank_results(query_text, results)
     
     def save_to_disk(self):
         """Salva o índice e metadados no disco"""

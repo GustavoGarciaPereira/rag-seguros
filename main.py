@@ -3,9 +3,35 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+from collections import deque
+import logging
+import json as _json
+import time as _time
 import os
 import uuid
-from typing import Optional, Dict
+from typing import Optional, Dict, Deque, Tuple
+
+# ---------------------------------------------------------------------------
+# Logging estruturado em JSON — nível configurável via LOG_LEVEL no .env
+# ---------------------------------------------------------------------------
+class _JsonFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        obj = {
+            "ts": self.formatTime(record, "%Y-%m-%dT%H:%M:%S"),
+            "level": record.levelname,
+            "msg": record.getMessage(),
+        }
+        if record.exc_info:
+            obj["exc"] = self.formatException(record.exc_info)
+        return _json.dumps(obj, ensure_ascii=False)
+
+_log_level = getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO)
+_handler = logging.StreamHandler()
+_handler.setFormatter(_JsonFormatter())
+logger = logging.getLogger("rag")
+logger.addHandler(_handler)
+logger.setLevel(_log_level)
+logger.propagate = False
 
 # Usar FAISS em vez de ChromaDB
 from vector_store_faiss import create_vector_store
@@ -36,6 +62,40 @@ os.makedirs(TEMP_DIR, exist_ok=True)
 
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
 ADMIN_API_KEY = os.getenv("ADMIN_API_KEY")
+
+# ---------------------------------------------------------------------------
+# Métricas em memória — últimas 24 horas
+# ---------------------------------------------------------------------------
+class MetricsStore:
+    """Armazena latências de queries em memória sem dependências externas."""
+    def __init__(self) -> None:
+        self._events: Deque[Tuple[float, float, float]] = deque()  # (ts, retrieval_ms, llm_ms)
+
+    def record(self, retrieval_ms: float, llm_ms: float) -> None:
+        self._events.append((_time.time(), retrieval_ms, llm_ms))
+        self._prune()
+
+    def _prune(self) -> None:
+        cutoff = _time.time() - 86400
+        while self._events and self._events[0][0] < cutoff:
+            self._events.popleft()
+
+    def stats(self) -> dict:
+        self._prune()
+        ev = list(self._events)
+        n = len(ev)
+        if n == 0:
+            return {"queries_24h": 0, "avg_retrieval_ms": 0.0, "avg_llm_ms": 0.0, "avg_total_ms": 0.0}
+        avg_r = sum(e[1] for e in ev) / n
+        avg_l = sum(e[2] for e in ev) / n
+        return {
+            "queries_24h": n,
+            "avg_retrieval_ms": round(avg_r, 1),
+            "avg_llm_ms": round(avg_l, 1),
+            "avg_total_ms": round(avg_r + avg_l, 1),
+        }
+
+metrics = MetricsStore()
 
 class AskRequest(BaseModel):
     question: str = Field(..., min_length=5, max_length=500, description="Pergunta sobre os documentos")
@@ -203,21 +263,38 @@ async def ask_question(data: AskRequest):
 
     Body: { "question": "...", "top_k": 10, "filter": {"seguradora": "Bradesco"} }
     """
+    t0 = _time.perf_counter()
     try:
-        # Buscar contexto relevante com filtro
+        # Etapa 1: recuperação FAISS
+        t1 = _time.perf_counter()
         context = vector_store.query_documents(data.question, n_results=data.top_k, filter_dict=data.filter)
-        
+        retrieval_ms = (_time.perf_counter() - t1) * 1000
+
         if not context:
+            logger.info(_json.dumps({"event": "query_no_context", "filter": data.filter}))
             return JSONResponse({
                 "success": True,
                 "answer": "Não encontrei informações relevantes nos documentos filtrados para responder sua pergunta.",
                 "context_used": [],
                 "has_context": False
             })
-        
-        # Gerar resposta usando a IA
+
+        # Etapa 2: geração LLM
+        t2 = _time.perf_counter()
         answer = llm_service.generate_answer(context, data.question)
-        
+        llm_ms = (_time.perf_counter() - t2) * 1000
+
+        total_ms = (_time.perf_counter() - t0) * 1000
+        metrics.record(retrieval_ms, llm_ms)
+        logger.info(_json.dumps({
+            "event": "query",
+            "retrieval_ms": round(retrieval_ms, 1),
+            "llm_ms": round(llm_ms, 1),
+            "total_ms": round(total_ms, 1),
+            "chunks": len(context),
+            "filter": data.filter,
+        }))
+
         # Preparar contexto para retorno
         context_preview = [
             {
@@ -229,7 +306,7 @@ async def ask_question(data: AskRequest):
             }
             for ctx in context
         ]
-        
+
         return JSONResponse({
             "success": True,
             "answer": answer,
@@ -237,7 +314,7 @@ async def ask_question(data: AskRequest):
             "has_context": True,
             "context_count": len(context)
         })
-        
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro ao processar pergunta: {str(e)}")
 
@@ -261,6 +338,14 @@ async def get_stats():
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro ao obter estatísticas: {str(e)}")
+
+@app.get("/metrics")
+async def get_metrics():
+    """Métricas operacionais: volume de queries (24h) e latências médias por etapa."""
+    return {
+        "vector_store": vector_store.get_collection_stats(),
+        "queries": metrics.stats(),
+    }
 
 if __name__ == "__main__":
     import uvicorn
