@@ -106,6 +106,63 @@
             from { opacity: 0; transform: translateY(10px); }
             to   { opacity: 1; transform: translateY(0); }
         }
+
+        /* ------------------------------------------------------------------ */
+        /* Botões de categoria de documento                                    */
+        /* ------------------------------------------------------------------ */
+        .category-btn {
+            padding: 0.3rem 0.85rem;
+            border-radius: 9999px;
+            border: 1.5px solid #d1d5db;
+            font-size: 0.78rem;
+            font-weight: 500;
+            color: #6b7280;
+            background: white;
+            transition: all 0.15s ease;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+        .category-btn:hover {
+            border-color: #3b82f6;
+            color: #3b82f6;
+        }
+        .category-btn.active {
+            background-color: #3b82f6;
+            border-color: #3b82f6;
+            color: white;
+        }
+
+        /* ------------------------------------------------------------------ */
+        /* Chips de sugestão                                                   */
+        /* ------------------------------------------------------------------ */
+        .suggestion-chip {
+            display: inline-block;
+            padding: 0.28rem 0.7rem;
+            border-radius: 9999px;
+            border: 1px solid #bfdbfe;
+            background: #eff6ff;
+            color: #2563eb;
+            font-size: 0.75rem;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            white-space: nowrap;
+        }
+        .suggestion-chip:hover {
+            background: #dbeafe;
+            border-color: #93c5fd;
+        }
+
+        /* ------------------------------------------------------------------ */
+        /* Botões do wizard                                                     */
+        /* ------------------------------------------------------------------ */
+        .sinistro-type-btn {
+            transition: all 0.15s ease;
+        }
+        .sinistro-type-btn.selected {
+            border-color: #3b82f6;
+            background-color: #eff6ff;
+            font-weight: 600;
+        }
     </style>
 </head>
 
@@ -350,6 +407,19 @@
 
             <!-- Input do chat -->
             <div class="p-4 border-t flex-shrink-0">
+
+                <!-- Botões de categoria -->
+                <div id="category-bar" class="flex flex-wrap gap-2 mb-3">
+                    <button class="category-btn" data-type="apolice"><i class="fas fa-file-contract mr-1"></i>Apólice</button>
+                    <button class="category-btn" data-type="sinistro"><i class="fas fa-car-crash mr-1"></i>Sinistro</button>
+                    <button class="category-btn" data-type="cobertura"><i class="fas fa-shield-alt mr-1"></i>Cobertura</button>
+                    <button class="category-btn" data-type="franquia"><i class="fas fa-coins mr-1"></i>Franquia</button>
+                    <button class="category-btn" data-type="endosso"><i class="fas fa-edit mr-1"></i>Endosso</button>
+                </div>
+
+                <!-- Chips de sugestão (aparecem ao selecionar categoria) -->
+                <div id="suggestion-bar" class="hidden flex flex-wrap gap-2 mb-3"></div>
+
                 <div class="flex space-x-2">
                     <input type="text" id="chat-input" placeholder="Digite sua pergunta sobre o documento..."
                         class="flex-grow p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
@@ -367,6 +437,71 @@
             </div>
         </div>
     </main>
+
+    <!-- ================================================================== -->
+    <!-- Wizard modal — Sinistro                                             -->
+    <!-- ================================================================== -->
+    <div id="wizard-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-sm p-6">
+            <div class="flex justify-between items-center mb-5">
+                <h2 class="text-base font-bold text-gray-800 flex items-center">
+                    <i class="fas fa-magic text-blue-500 mr-2"></i>
+                    Montar pergunta de sinistro
+                </h2>
+                <button id="close-wizard" class="text-gray-500 hover:text-gray-700">
+                    <i class="fas fa-times text-lg"></i>
+                </button>
+            </div>
+
+            <!-- Passo 1: tipo do sinistro -->
+            <div id="wizard-step-1">
+                <p class="text-xs text-gray-500 uppercase tracking-wide font-semibold mb-3">Passo 1 de 2 — Tipo do sinistro</p>
+                <div class="grid grid-cols-2 gap-2">
+                    <button class="sinistro-type-btn border border-gray-200 rounded-lg p-3 text-sm text-gray-700 hover:border-blue-400 hover:bg-blue-50" data-val="colisão">
+                        <i class="fas fa-car-crash text-orange-500 mb-1 block text-2xl"></i>
+                        Colisão
+                    </button>
+                    <button class="sinistro-type-btn border border-gray-200 rounded-lg p-3 text-sm text-gray-700 hover:border-blue-400 hover:bg-blue-50" data-val="roubo">
+                        <i class="fas fa-user-secret text-red-500 mb-1 block text-2xl"></i>
+                        Roubo
+                    </button>
+                    <button class="sinistro-type-btn border border-gray-200 rounded-lg p-3 text-sm text-gray-700 hover:border-blue-400 hover:bg-blue-50" data-val="incêndio">
+                        <i class="fas fa-fire text-red-600 mb-1 block text-2xl"></i>
+                        Incêndio
+                    </button>
+                    <button class="sinistro-type-btn border border-gray-200 rounded-lg p-3 text-sm text-gray-700 hover:border-blue-400 hover:bg-blue-50" data-val="outro">
+                        <i class="fas fa-ellipsis-h text-gray-400 mb-1 block text-2xl"></i>
+                        Outro
+                    </button>
+                </div>
+            </div>
+
+            <!-- Passo 2: data aproximada -->
+            <div id="wizard-step-2" class="hidden">
+                <p class="text-xs text-gray-500 uppercase tracking-wide font-semibold mb-3">Passo 2 de 2 — Data aproximada</p>
+                <input type="text" id="wizard-date" placeholder="Ex: janeiro de 2024"
+                    class="w-full border border-gray-300 rounded-lg p-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <p class="text-xs text-gray-400 mt-2">Opcional — deixe em branco se não souber</p>
+            </div>
+
+            <!-- Rodapé do wizard -->
+            <div class="flex items-center justify-between mt-5">
+                <button id="wizard-back" class="hidden text-sm text-gray-500 hover:text-gray-700 flex items-center space-x-1">
+                    <i class="fas fa-arrow-left"></i><span>Voltar</span>
+                </button>
+                <div class="ml-auto flex space-x-2">
+                    <button id="wizard-next"
+                        class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm disabled:opacity-40 disabled:cursor-not-allowed"
+                        disabled>
+                        Próximo <i class="fas fa-arrow-right ml-1"></i>
+                    </button>
+                    <button id="wizard-finish" class="hidden bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-sm">
+                        <i class="fas fa-check mr-1"></i>Montar pergunta
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <!-- ================================================================== -->
     <!-- Scripts                                                              -->
@@ -439,6 +574,122 @@
         let selectedFile = null;
         let isProcessing = false;
         let messageCounter = 0;
+        let selectedDocumentType = null;
+        let wizardSinistroType = null;
+
+        // ------------------------------------------------------------------ //
+        // Sugestões por categoria                                              //
+        // ------------------------------------------------------------------ //
+        const SUGGESTIONS = {
+            apolice:   ['O que está coberto?', 'Qual o período de vigência?', 'Quem são os beneficiários?'],
+            sinistro:  ['Como acionar o sinistro?', 'Quais documentos preciso?', 'Qual o prazo de resposta?'],
+            cobertura: ['O que não está coberto?', 'Há carência?', 'Qual o limite de cobertura?'],
+            franquia:  ['Qual o valor da franquia?', 'Quando ela é cobrada?', 'Há franquia reduzida?'],
+            endosso:   ['O que mudou na apólice?', 'Quando entra em vigor?', 'Como solicitar um endosso?'],
+        };
+
+        // ------------------------------------------------------------------ //
+        // Botões de categoria                                                  //
+        // ------------------------------------------------------------------ //
+        document.querySelectorAll('.category-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const type = btn.dataset.type;
+                if (selectedDocumentType === type) {
+                    selectedDocumentType = null;
+                    btn.classList.remove('active');
+                    hideSuggestions();
+                } else {
+                    document.querySelectorAll('.category-btn').forEach(b => b.classList.remove('active'));
+                    selectedDocumentType = type;
+                    btn.classList.add('active');
+                    showSuggestions(type);
+                }
+            });
+        });
+
+        function showSuggestions(type) {
+            const bar = document.getElementById('suggestion-bar');
+            bar.innerHTML = (SUGGESTIONS[type] || []).map(s =>
+                `<button class="suggestion-chip" data-question="${escapeHtml(s)}">${escapeHtml(s)}</button>`
+            ).join('');
+            bar.classList.remove('hidden');
+            bar.querySelectorAll('.suggestion-chip').forEach(chip => {
+                chip.addEventListener('click', () => {
+                    const q = chip.dataset.question;
+                    if (type === 'sinistro' && q === 'Como acionar o sinistro?') {
+                        openWizard();
+                        return;
+                    }
+                    chatInput.value = q;
+                    chatInput.focus();
+                });
+            });
+        }
+
+        function hideSuggestions() {
+            const bar = document.getElementById('suggestion-bar');
+            bar.classList.add('hidden');
+            bar.innerHTML = '';
+        }
+
+        // ------------------------------------------------------------------ //
+        // Wizard — Sinistro                                                   //
+        // ------------------------------------------------------------------ //
+        const wizardModal = document.getElementById('wizard-modal');
+
+        function openWizard() {
+            wizardSinistroType = null;
+            document.getElementById('wizard-step-1').classList.remove('hidden');
+            document.getElementById('wizard-step-2').classList.add('hidden');
+            document.getElementById('wizard-back').classList.add('hidden');
+            document.getElementById('wizard-next').classList.remove('hidden');
+            document.getElementById('wizard-finish').classList.add('hidden');
+            document.getElementById('wizard-next').disabled = true;
+            document.getElementById('wizard-date').value = '';
+            document.querySelectorAll('.sinistro-type-btn').forEach(b => b.classList.remove('selected'));
+            wizardModal.classList.remove('hidden');
+        }
+
+        document.getElementById('close-wizard').addEventListener('click', () => {
+            wizardModal.classList.add('hidden');
+        });
+        wizardModal.addEventListener('click', e => {
+            if (e.target === wizardModal) wizardModal.classList.add('hidden');
+        });
+
+        document.querySelectorAll('.sinistro-type-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.sinistro-type-btn').forEach(b => b.classList.remove('selected'));
+                btn.classList.add('selected');
+                wizardSinistroType = btn.dataset.val;
+                document.getElementById('wizard-next').disabled = false;
+            });
+        });
+
+        document.getElementById('wizard-next').addEventListener('click', () => {
+            document.getElementById('wizard-step-1').classList.add('hidden');
+            document.getElementById('wizard-step-2').classList.remove('hidden');
+            document.getElementById('wizard-back').classList.remove('hidden');
+            document.getElementById('wizard-next').classList.add('hidden');
+            document.getElementById('wizard-finish').classList.remove('hidden');
+            document.getElementById('wizard-date').focus();
+        });
+
+        document.getElementById('wizard-back').addEventListener('click', () => {
+            document.getElementById('wizard-step-2').classList.add('hidden');
+            document.getElementById('wizard-step-1').classList.remove('hidden');
+            document.getElementById('wizard-back').classList.add('hidden');
+            document.getElementById('wizard-next').classList.remove('hidden');
+            document.getElementById('wizard-finish').classList.add('hidden');
+        });
+
+        document.getElementById('wizard-finish').addEventListener('click', () => {
+            const date = document.getElementById('wizard-date').value.trim();
+            const datePart = date ? ` ocorrido em ${date}` : '';
+            chatInput.value = `Como acionar sinistro de ${wizardSinistroType}${datePart}?`;
+            wizardModal.classList.add('hidden');
+            chatInput.focus();
+        });
 
         // ------------------------------------------------------------------ //
         // Inicialização                                                        //
@@ -660,6 +911,7 @@
                 const seguradoraFilter = document.getElementById('seguradora-filter').value;
                 const requestBody = { question, top_k: 10 };
                 if (seguradoraFilter) requestBody.filter = { seguradora: seguradoraFilter };
+                if (selectedDocumentType) requestBody.document_type = selectedDocumentType;
 
                 const response = await fetch('/ask', {
                     method: 'POST',

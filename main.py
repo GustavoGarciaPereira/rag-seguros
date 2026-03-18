@@ -108,10 +108,13 @@ class MetricsStore:
 
 metrics = MetricsStore()
 
+ALLOWED_DOCUMENT_TYPES = {"apolice", "sinistro", "cobertura", "franquia", "endosso"}
+
 class AskRequest(BaseModel):
     question: str = Field(..., min_length=5, max_length=500, description="Pergunta sobre os documentos")
     top_k: int = Field(default=10, ge=1, le=20, description="Número de trechos a recuperar")
     filter: Optional[Dict[str, str]] = Field(default=None, description="Filtro de metadados, ex: {'seguradora': 'Bradesco'}")
+    document_type: Optional[str] = Field(default=None, description="Tipo de documento: apolice | sinistro | cobertura | franquia | endosso")
 
 # Montar pasta estática para o frontend
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -278,8 +281,16 @@ async def ask_question(data: AskRequest):
     """
     Endpoint para fazer perguntas sobre os documentos com suporte a filtro.
 
-    Body: { "question": "...", "top_k": 10, "filter": {"seguradora": "Bradesco"} }
+    Body: { "question": "...", "top_k": 10, "filter": {"seguradora": "Bradesco"}, "document_type": "apolice" }
     """
+    if data.document_type is not None and data.document_type not in ALLOWED_DOCUMENT_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"document_type inválido. Valores aceitos: {', '.join(sorted(ALLOWED_DOCUMENT_TYPES))}"
+        )
+
+    seguradora = data.filter.get("seguradora") if data.filter else None
+
     t0 = _time.perf_counter()
     try:
         # Etapa 1: recuperação FAISS
@@ -298,7 +309,7 @@ async def ask_question(data: AskRequest):
 
         # Etapa 2: geração LLM
         t2 = _time.perf_counter()
-        answer = llm_service.generate_answer(context, data.question)
+        answer = llm_service.generate_answer(context, data.question, seguradora=seguradora, document_type=data.document_type)
         llm_ms = (_time.perf_counter() - t2) * 1000
 
         total_ms = (_time.perf_counter() - t0) * 1000
@@ -310,6 +321,7 @@ async def ask_question(data: AskRequest):
             "total_ms": round(total_ms, 1),
             "chunks": len(context),
             "filter": data.filter,
+            "document_type": data.document_type,
         }))
 
         # Preparar contexto para retorno
