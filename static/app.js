@@ -266,6 +266,7 @@ function addMessage(content, sender, isSystem = false) {
         : (sender === 'user' ? 'chat-message-user' : 'chat-message-assistant')}`;
 
     if (sender === 'assistant') {
+        const renderedHtml = marked.parse(content);
         messageDiv.innerHTML = `
             <div class="flex items-start space-x-3">
                 <div class="bg-blue-100 text-blue-600 p-2 rounded-full flex-shrink-0">
@@ -273,7 +274,7 @@ function addMessage(content, sender, isSystem = false) {
                 </div>
                 <div class="flex-grow min-w-0">
                     <div class="font-medium text-gray-700 mb-1 text-sm">Assistente</div>
-                    <div class="response-text text-gray-800 whitespace-pre-wrap text-sm">${escapeHtml(content)}</div>
+                    <div class="response-text prose text-gray-800 text-sm" data-markdown="${escapeHtml(content)}">${renderedHtml}</div>
                     <button class="copy-btn mt-2 text-xs text-gray-400 hover:text-blue-500 transition duration-200 flex items-center space-x-1">
                         <i class="fas fa-copy"></i>
                         <span>Copiar resposta</span>
@@ -282,7 +283,7 @@ function addMessage(content, sender, isSystem = false) {
             </div>
         `;
         messageDiv.querySelector('.copy-btn').addEventListener('click', async () => {
-            const text = messageDiv.querySelector('.response-text').textContent;
+            const text = messageDiv.querySelector('.response-text').dataset.markdown;
             try {
                 await navigator.clipboard.writeText(text);
                 const span = messageDiv.querySelector('.copy-btn span');
