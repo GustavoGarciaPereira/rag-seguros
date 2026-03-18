@@ -1,28 +1,25 @@
 import os
 import time
 from openai import OpenAI
-from dotenv import load_dotenv
 
-# Carregar variáveis de ambiente
-load_dotenv()
+from app.core.config import settings
+
 
 class LLMService:
     def __init__(self):
         """Inicializa o cliente OpenAI configurado para DeepSeek"""
-        self.api_key = os.getenv("DEEPSEEK_API_KEY")
-        
-        if not self.api_key:
+        if not settings.deepseek_api_key:
             raise ValueError("DEEPSEEK_API_KEY não encontrada no arquivo .env")
-        
+
         self.client = OpenAI(
-            api_key=self.api_key,
+            api_key=settings.deepseek_api_key,
             base_url="https://api.deepseek.com",
             timeout=30.0,  # 30s — evita workers travados em falhas de rede
         )
 
         self.model = "deepseek-chat"
         self.max_retries = 3
-    
+
     def generate_answer(self, context, question, max_tokens=3000, seguradora: str = None, document_type: str = None):
         """
         Gera uma resposta baseada no contexto fornecido
@@ -52,9 +49,9 @@ class LLMService:
                 f"{result['text']}"
             )
             context_items.append(item)
-            
+
         context_text = "\n\n".join(context_items)
-        
+
         # Montar o prompt do sistema
         system_prompt = """Você é o AUDITOR IA DE SINISTROS - um especialista forense em apólices de seguros.
         Sua missão é encontrar detalhes técnicos que passam despercebidos por leituras superficiais.
@@ -116,7 +113,7 @@ INSTRUÇÕES DE ANÁLISE:
 - Priorize tabelas e listas de limites se a pergunta envolver valores ou serviços
 - Use o formato de resposta estruturado (4 seções)
 - Cite TODAS as fontes no formato [Seguradora | Pág. X]"""
-        
+
         last_error = None
         for attempt in range(self.max_retries):
             try:
@@ -141,7 +138,7 @@ INSTRUÇÕES DE ANÁLISE:
 
         print(f"Todas as {self.max_retries} tentativas falharam: {last_error}")
         return f"Desculpe, não foi possível obter resposta após {self.max_retries} tentativas. Tente novamente em instantes."
-    
+
     def test_connection(self):
         """Testa a conexão com a API da DeepSeek"""
         try:
@@ -153,30 +150,3 @@ INSTRUÇÕES DE ANÁLISE:
             return True, "Conexão com DeepSeek API estabelecida com sucesso!"
         except Exception as e:
             return False, f"Erro na conexão: {str(e)}"
-
-# Função de conveniência
-def create_llm_service():
-    return LLMService()
-
-if __name__ == "__main__":
-    # Teste rápido
-    try:
-        llm = LLMService()
-        success, message = llm.test_connection()
-        print(message)
-        
-        if success:
-            # Teste com contexto de exemplo
-            test_context = [
-                {
-                    "text": "O seguro de equipamentos agrícolas cobre danos por incêndio, raio e explosão. A franquia é de R$ 1.000,00 por ocorrência.",
-                    "relevance_score": 0.95,
-                    "source": "test.pdf",
-                    "chunk_index": 0
-                }
-            ]
-            test_question = "Qual é o valor da franquia?"
-            answer = llm.generate_answer(test_context, test_question)
-            print(f"\nTeste de resposta:\nPergunta: {test_question}\nResposta: {answer}")
-    except ValueError as e:
-        print(f"Erro de configuração: {e}")

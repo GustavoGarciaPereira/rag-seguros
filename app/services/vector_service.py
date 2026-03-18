@@ -2,6 +2,7 @@ import os
 import re
 import pickle
 import faiss
+from abc import ABC, abstractmethod
 from pypdf import PdfReader
 from sentence_transformers import SentenceTransformer
 import hashlib
@@ -19,7 +20,18 @@ _CLAUSE_BOUNDARY = re.compile(
     re.IGNORECASE,
 )
 
-class VectorStoreFAISS:
+
+class VectorStoreBase(ABC):
+    @abstractmethod
+    def search(self, query: str, n_results: int = 10, filter_dict: Dict[str, Any] = None) -> List[Dict[str, Any]]:
+        ...
+
+    @abstractmethod
+    def add_document(self, file_path: str, metadata_input: Dict[str, Any] = None) -> int:
+        ...
+
+
+class FAISSStore(VectorStoreBase):
     def __init__(self, persist_directory="./faiss_db"):
         """Inicializa o FAISS com persistência local"""
         self.persist_directory = persist_directory
@@ -51,7 +63,7 @@ class VectorStoreFAISS:
         """Pré-carrega o modelo de embeddings. Chamado no startup para mover
         o carregamento pesado para antes do primeiro request real."""
         _ = self.embedding_model.encode("warm up")
-    
+
     def _split_text_into_chunks(self, text: str, chunk_size: int = 500, overlap: int = 50) -> List[tuple]:
         """Divide o texto em chunks com sobreposição.
         Retorna lista de (chunk_text, start_pos) para permitir cálculo de página por posição."""
@@ -79,7 +91,7 @@ class VectorStoreFAISS:
                 break
 
         return chunks
-    
+
     def _split_text_semantically(self, text: str, chunk_size: int = 1200, overlap: int = 200) -> List[tuple]:
         """Chunking semântico heurístico para apólices de seguros.
 
@@ -172,7 +184,7 @@ class VectorStoreFAISS:
 
     def add_document(self, file_path: str, metadata_input: Dict[str, Any] = None, chunk_size: int = 1200, overlap: int = 200) -> int:
         """Processa um PDF e adiciona ao banco vetorial com metadados e overlap entre páginas
-        
+
         Args:
             chunk_size: Tamanho do chunk (padrão 1200 para preservar tabelas)
             overlap: Sobreposição entre chunks (padrão 200 para continuidade)
@@ -185,7 +197,7 @@ class VectorStoreFAISS:
         seguradora = metadata_input.get("seguradora", "Desconhecida")
         ano = metadata_input.get("ano", 0)
         tipo = metadata_input.get("tipo", "Geral")
-        
+
         reader = PdfReader(file_path)
         doc_id = self._generate_document_id(file_path)
 
@@ -196,7 +208,7 @@ class VectorStoreFAISS:
 
         all_chunks = []
         all_metadatas = []
-        
+
         # Variável para manter o final da página anterior e garantir overlap entre páginas
         previous_page_tail = ""
 
@@ -239,20 +251,20 @@ class VectorStoreFAISS:
                 previous_page_tail = text[-overlap:]
             else:
                 previous_page_tail = text
-        
+
         if not all_chunks:
             raise ValueError("Não foi possível extrair texto do PDF")
-        
+
         print(f"Documento dividido em {len(all_chunks)} chunks em {len(reader.pages)} páginas")
-        
+
         embeddings = self.embedding_model.encode(all_chunks)
         self.index.add(embeddings.astype('float32'))
         self.metadata.extend(all_metadatas)
         self.document_texts.extend(all_chunks)
-        
+
         self.save_to_disk()
         return len(all_chunks)
-    
+
     def _rerank_results(self, query_text: str, results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Reranking leve: combina score FAISS (70%) com sobreposição de termos da query (30%).
 
@@ -276,28 +288,28 @@ class VectorStoreFAISS:
 
         return sorted(results, key=lambda x: x['relevance_score'], reverse=True)
 
-    def query_documents(self, query_text: str, n_results: int = 10, filter_dict: Dict[str, Any] = None) -> List[Dict[str, Any]]:
+    def search(self, query: str, n_results: int = 10, filter_dict: Dict[str, Any] = None) -> List[Dict[str, Any]]:
         """Busca documentos relevantes (Top-K=10 para análise profunda de manuais densos)"""
         if self.index.ntotal == 0:
             return []
-        
+
         # Se houver filtro, buscamos mais resultados para garantir que encontraremos o que precisamos após filtrar
         search_k = n_results * 5 if filter_dict else n_results
-        
+
         # Gerar embedding da query
-        query_embedding = self.embedding_model.encode([query_text]).astype('float32')
-        
+        query_embedding = self.embedding_model.encode([query]).astype('float32')
+
         # Buscar no FAISS
         distances, indices = self.index.search(query_embedding, min(search_k, self.index.ntotal))
-        
+
         # Formatar resultados e aplicar filtro
         results = []
         for idx, distance in zip(indices[0], distances[0]):
             if idx < 0 or idx >= len(self.metadata):
                 continue
-                
+
             meta = self.metadata[idx]
-            
+
             # Aplicar filtro se fornecido
             if filter_dict:
                 match = True
@@ -307,7 +319,7 @@ class VectorStoreFAISS:
                         break
                 if not match:
                     continue
-            
+
             results.append({
                 "text": self.document_texts[idx],
                 "source": meta["source"],
@@ -317,36 +329,30 @@ class VectorStoreFAISS:
                 "tipo": meta.get("tipo", "Geral"),
                 "relevance_score": float(1 / (1 + distance))
             })
-            
+
             # Se já atingimos o número solicitado de resultados após o filtro, paramos
             if len(results) >= n_results:
                 break
 
-        return self._rerank_results(query_text, results)
-    
+        return self._rerank_results(query, results)
+
     def save_to_disk(self):
         """Salva o índice e metadados no disco"""
-        # Salvar índice FAISS
         faiss.write_index(self.index, self.index_path)
-        
-        # Salvar metadados
         with open(self.metadata_path, 'wb') as f:
             pickle.dump({
                 'metadata': self.metadata,
                 'document_texts': self.document_texts
             }, f)
-    
+
     def load_from_disk(self):
         """Carrega o índice e metadados do disco"""
-        # Carregar índice FAISS
         self.index = faiss.read_index(self.index_path)
-        
-        # Carregar metadados
         with open(self.metadata_path, 'rb') as f:
             data = pickle.load(f)
             self.metadata = data['metadata']
             self.document_texts = data['document_texts']
-    
+
     def get_count(self) -> int:
         """Retorna o número total de chunks indexados"""
         return self.index.ntotal
@@ -358,13 +364,3 @@ class VectorStoreFAISS:
             "persist_directory": self.persist_directory,
             "embedding_dim": self.embedding_dim
         }
-
-# Função de conveniência
-def create_vector_store():
-    return VectorStoreFAISS()
-
-if __name__ == "__main__":
-    # Teste rápido
-    vs = VectorStoreFAISS()
-    print("VectorStore (FAISS) inicializado com sucesso!")
-    print(f"Estatísticas: {vs.get_collection_stats()}")
