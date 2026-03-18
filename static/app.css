@@ -1,0 +1,155 @@
+/* ------------------------------------------------------------------ */
+/* Layout full-screen                                                  */
+/* ------------------------------------------------------------------ */
+html, body {
+    height: 100%;
+    overflow: hidden;
+}
+
+/* ------------------------------------------------------------------ */
+/* Drawer lateral                                                       */
+/* ------------------------------------------------------------------ */
+#sidebar-drawer {
+    position: fixed;
+    top: 0;
+    left: 0;
+    height: 100%;
+    width: 300px;
+    z-index: 40;
+    transform: translateX(-100%);
+    transition: transform 0.25s ease;
+}
+
+#sidebar-drawer.open {
+    transform: translateX(0);
+}
+
+#drawer-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    background: rgba(0, 0, 0, 0.45);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.25s ease;
+}
+
+#drawer-overlay.open {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+/* ------------------------------------------------------------------ */
+/* Mensagens de chat                                                   */
+/* ------------------------------------------------------------------ */
+.chat-message-user {
+    background-color: #3b82f6;
+    color: white;
+    border-radius: 18px 18px 4px 18px;
+    margin-left: auto;
+}
+
+.chat-message-assistant {
+    background-color: #f3f4f6;
+    color: #1f2937;
+    border-radius: 18px 18px 18px 4px;
+    margin-right: auto;
+}
+
+.chat-message-system {
+    background-color: #fef3c7;
+    color: #92400e;
+    border-radius: 12px;
+    margin: 0 auto;
+    font-size: 0.9rem;
+}
+
+/* ------------------------------------------------------------------ */
+/* Scrollbar fina                                                       */
+/* ------------------------------------------------------------------ */
+.scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: #cbd5e1 #f1f5f9;
+}
+
+.scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+}
+
+.scrollbar-thin::-webkit-scrollbar-track {
+    background: #f1f5f9;
+}
+
+.scrollbar-thin::-webkit-scrollbar-thumb {
+    background-color: #cbd5e1;
+    border-radius: 20px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Animação de entrada de mensagem                                     */
+/* ------------------------------------------------------------------ */
+.fade-in {
+    animation: fadeIn 0.3s ease-in;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ------------------------------------------------------------------ */
+/* Botões de categoria de documento                                    */
+/* ------------------------------------------------------------------ */
+.category-btn {
+    padding: 0.3rem 0.85rem;
+    border-radius: 9999px;
+    border: 1.5px solid #d1d5db;
+    font-size: 0.78rem;
+    font-weight: 500;
+    color: #6b7280;
+    background: white;
+    transition: all 0.15s ease;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.category-btn:hover {
+    border-color: #3b82f6;
+    color: #3b82f6;
+}
+.category-btn.active {
+    background-color: #3b82f6;
+    border-color: #3b82f6;
+    color: white;
+}
+
+/* ------------------------------------------------------------------ */
+/* Chips de sugestão                                                   */
+/* ------------------------------------------------------------------ */
+.suggestion-chip {
+    display: inline-block;
+    padding: 0.28rem 0.7rem;
+    border-radius: 9999px;
+    border: 1px solid #bfdbfe;
+    background: #eff6ff;
+    color: #2563eb;
+    font-size: 0.75rem;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    white-space: nowrap;
+}
+.suggestion-chip:hover {
+    background: #dbeafe;
+    border-color: #93c5fd;
+}
+
+/* ------------------------------------------------------------------ */
+/* Botões do wizard                                                     */
+/* ------------------------------------------------------------------ */
+.sinistro-type-btn {
+    transition: all 0.15s ease;
+}
+.sinistro-type-btn.selected {
+    border-color: #3b82f6;
+    background-color: #eff6ff;
+    font-weight: 600;
+}
