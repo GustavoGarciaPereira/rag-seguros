@@ -117,6 +117,27 @@ class SQLiteMetadataStore:
             return conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
 
     # ------------------------------------------------------------------
+    # Update
+    # ------------------------------------------------------------------
+
+    def update_document_metadata(
+        self, doc_id: str, seguradora: str, ano: int, tipo: str
+    ) -> bool:
+        """Atualiza metadados de seguro de todos os chunks de um documento.
+
+        Não altera embeddings — só os campos de metadados no SQLite.
+
+        Returns:
+            True se ao menos um chunk foi atualizado.
+        """
+        with self._conn() as conn:
+            cursor = conn.execute(
+                "UPDATE chunks SET seguradora=?, ano=?, tipo=? WHERE doc_id=?",
+                (seguradora, ano, tipo, doc_id),
+            )
+        return cursor.rowcount > 0
+
+    # ------------------------------------------------------------------
     # Delete + renumber
     # ------------------------------------------------------------------
 

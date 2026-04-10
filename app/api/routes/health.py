@@ -3,10 +3,11 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import HTMLResponse
 
-from app.core.dependencies import get_llm_service, get_vector_service
+from app.core.dependencies import get_document_catalog, get_llm_service, get_vector_service
 from app.core.metrics import metrics
 from app.infrastructure.gateways.deepseek_gateway import DeepSeekGateway
 from app.infrastructure.repositories.faiss_repository import FAISSVectorRepository
+from app.infrastructure.repositories.sqlite_catalog import SQLiteDocumentCatalog
 
 router = APIRouter()
 logger = logging.getLogger("rag")
@@ -37,12 +38,17 @@ async def get_status(vs: FAISSVectorRepository = Depends(get_vector_service)):
 async def get_stats(
     vs: FAISSVectorRepository = Depends(get_vector_service),
     llm: DeepSeekGateway = Depends(get_llm_service),
+    catalog: SQLiteDocumentCatalog = Depends(get_document_catalog),
 ):
     try:
         vs_stats = vs.get_collection_stats()
         success, llm_status = llm.test_connection()
         return {
             "vector_store": vs_stats,
+            "inventory": {
+                "total_documents": len(catalog.list_all()),
+                "total_chunks": catalog.total_chunks(),
+            },
             "llm_service": {
                 "status": "connected" if success else "disconnected",
                 "message": llm_status,

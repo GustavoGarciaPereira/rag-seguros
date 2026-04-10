@@ -60,3 +60,20 @@ class SearchResult(BaseModel):
     def to_context_dict(self) -> dict:
         """Retorna dict compatível com o formato de contexto legado."""
         return self.model_dump()
+
+
+class DocumentRecord(BaseModel):
+    """Registro de inventário de um documento indexado no catálogo.
+
+    Um DocumentRecord representa um arquivo PDF completo, enquanto
+    Chunk representa um fragmento individual desse arquivo.
+    """
+
+    doc_id: str
+    source_name: str
+    file_hash: str  # SHA-256 do conteúdo binário
+    seguradora: str = "Desconhecida"
+    ano: int = 0
+    tipo: str = "Geral"
+    chunk_count: int = 0
+    created_at: str  # ISO 8601 UTC

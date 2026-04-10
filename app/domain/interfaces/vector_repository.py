@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
-from app.domain.entities.document import Chunk, SearchResult
+from app.domain.entities.document import Chunk, InsuranceMetadata, SearchResult
 
 
 class VectorRepository(ABC):
@@ -43,6 +43,17 @@ class VectorRepository(ABC):
     @abstractmethod
     def has_document(self, document_id: str) -> bool:
         """Retorna True se o documento já está indexado."""
+        ...
+
+    @abstractmethod
+    def update_metadata(self, document_id: str, metadata: InsuranceMetadata) -> bool:
+        """Atualiza os metadados de seguro de um documento sem re-indexar embeddings.
+
+        Útil quando apenas seguradora/ano/tipo mudam para um arquivo idêntico.
+
+        Returns:
+            True se o documento existia e foi atualizado.
+        """
         ...
 
     @abstractmethod

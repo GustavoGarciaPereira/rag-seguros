@@ -103,7 +103,14 @@ class InsuranceSemanticChunker(TextChunker):
 
     @staticmethod
     def _fixed_chunk(text: str, chunk_size: int, overlap: int) -> List[tuple[str, int]]:
-        """Fallback: divide por tamanho fixo com overlap, evitando cortar palavras."""
+        """Fallback: divide por tamanho fixo com overlap, evitando cortar palavras.
+
+        # Optimization target: este processamento de string pesado (iteração byte a byte
+        # para encontrar word boundaries + construção de lista de tuplas) será movido para
+        # uma extensão em Rust/PyO3.  A interface permanece idêntica: recebe str Python,
+        # devolve List[tuple[str, int]].  O ganho esperado é ~5-10× em documentos grandes
+        # (>500 páginas) onde este método é chamado O(n_segmentos) vezes.
+        """
         chunks: List[tuple[str, int]] = []
         start = 0
         while start < len(text):

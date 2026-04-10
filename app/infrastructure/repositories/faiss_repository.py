@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional
 import faiss
 from sentence_transformers import SentenceTransformer
 
-from app.domain.entities.document import Chunk, SearchResult
+from app.domain.entities.document import Chunk, InsuranceMetadata, SearchResult
 from app.domain.interfaces.vector_repository import VectorRepository
 from app.infrastructure.repositories.sqlite_metadata import SQLiteMetadataStore
 
@@ -152,6 +152,11 @@ class FAISSVectorRepository(VectorRepository):
 
         faiss.write_index(self.index, self.index_path)
         return removed
+
+    def update_metadata(self, document_id: str, metadata: InsuranceMetadata) -> bool:
+        return self._meta.update_document_metadata(
+            document_id, metadata.seguradora, metadata.ano, metadata.tipo
+        )
 
     def has_document(self, document_id: str) -> bool:
         return self._meta.has_document(document_id)
