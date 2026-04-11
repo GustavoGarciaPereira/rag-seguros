@@ -225,18 +225,27 @@
                         </h2>
                         <p class="text-xs text-gray-500">Faça perguntas sobre seus documentos de seguro</p>
                     </div>
-                    <div class="flex items-center space-x-2">
+                    <div class="flex items-center flex-wrap gap-2">
                         <i class="fas fa-filter text-gray-400 text-sm"></i>
                         <select id="seguradora-filter"
                             class="text-sm border border-gray-200 rounded-lg px-2 py-1.5 bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent">
                             <option value="">Todas as seguradoras</option>
                             <option value="Bradesco">Bradesco</option>
+                            <option value="Allianz">Allianz</option>
                             <option value="Porto Seguro">Porto Seguro</option>
                             <option value="Azul">Azul</option>
-                            <option value="Allianz">Allianz</option>
                             <option value="Tokio Marine">Tokio Marine</option>
                             <option value="Liberty">Liberty</option>
                             <option value="Mapfre">Mapfre</option>
+                        </select>
+                        <select id="ramo-filter"
+                            class="text-sm border border-gray-200 rounded-lg px-2 py-1.5 bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                            <option value="">Todos os ramos</option>
+                            <option value="Agricola">Agricola</option>
+                            <option value="Automovel">Automovel</option>
+                            <option value="PME">PME</option>
+                            <option value="Construcao Civil">Construcao Civil</option>
+                            <option value="Residencial">Residencial</option>
                         </select>
                     </div>
                 </div>

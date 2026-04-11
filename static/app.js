@@ -401,8 +401,12 @@ async function sendQuestion() {
 
     try {
         const seguradoraFilter = document.getElementById('seguradora-filter').value;
-        const requestBody = { question, top_k: 10 };
-        if (seguradoraFilter) requestBody.filter = { seguradora: seguradoraFilter };
+        const ramoFilter = document.getElementById('ramo-filter').value;
+        const requestBody = { question, top_k: 15 };
+        const filter = {};
+        if (seguradoraFilter) filter.seguradora = seguradoraFilter;
+        if (ramoFilter) filter.ramo = ramoFilter;
+        if (Object.keys(filter).length > 0) requestBody.filter = filter;
         if (selectedDocumentType) requestBody.document_type = selectedDocumentType;
 
         const response = await fetch('/ask', {

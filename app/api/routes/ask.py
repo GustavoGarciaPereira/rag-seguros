@@ -32,6 +32,8 @@ async def ask_question(
 
     seguradora = data.filter.get("seguradora") if data.filter else None
 
+    logger.info("Filtro recebido via UI: %s", data.filter)
+
     t0 = _time.perf_counter()
     try:
         t1 = _time.perf_counter()
