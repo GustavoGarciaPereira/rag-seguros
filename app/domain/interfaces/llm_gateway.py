@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import List, Optional
+from typing import Iterator, List, Optional
 
 from app.domain.entities.document import SearchResult
 
@@ -21,6 +21,17 @@ class LLMGateway(ABC):
         document_type: Optional[str] = None,
     ) -> str:
         """Gera resposta estruturada a partir do *context* recuperado."""
+        ...
+
+    @abstractmethod
+    def generate_stream(
+        self,
+        question: str,
+        context: List[SearchResult],
+        seguradora: Optional[str] = None,
+        document_type: Optional[str] = None,
+    ) -> Iterator[str]:
+        """Gera resposta em streaming, cedendo cada delta de texto."""
         ...
 
     @abstractmethod

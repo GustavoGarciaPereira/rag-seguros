@@ -39,7 +39,7 @@ RAG (Retrieval-Augmented Generation) API for insurance document analysis built o
 3. **Deduplication** → `IngestDocument` computes SHA-256 of the file; if hash exists in the `DocumentCatalog`, skips re-embedding or only updates metadata in-place
 4. **Vectorization** → `FAISSVectorRepository` encodes chunks with `sentence-transformers` (`all-MiniLM-L6-v2`, 384-dim) and persists to FAISS + SQLite
 5. **Query** → `AskInsuranceQuestion`: FAISS top-K (default 15) → `KeywordOverlapReranker` (70% semantic + 30% PT term overlap) → `DeepSeekGateway`
-6. **Generation** → DeepSeek `deepseek-chat`, 4-section audit response with Chain-of-Thought (Análise Prévia Silenciosa), cross-reference resolution and formula transcription; max_tokens 4000, timeout 30s, 3 retries with exponential backoff
+6. **Generation** → DeepSeek `deepseek-chat` via **SSE streaming** (`stream=True`); 4-section audit response with Chain-of-Thought (Análise Prévia Silenciosa), cross-reference resolution and formula transcription; max_tokens 4000, timeout 30s, 3 retries with exponential backoff (non-streaming path only)
 
 ### Layer responsibilities
 
@@ -64,7 +64,7 @@ app/
 │       ├── vector_repository.py  # VectorRepository ABC: add/search/delete/update_metadata/count
 │       ├── document_parser.py    # DocumentParser ABC
 │       ├── document_catalog.py   # DocumentCatalog ABC: register/find_by_hash/update_metadata/list_all
-│       └── llm_gateway.py        # LLMGateway ABC
+│       └── llm_gateway.py        # LLMGateway ABC: generate (sync) + generate_stream (Iterator[str])
 ├── use_cases/
 │   ├── ingest_document.py   # IngestDocument: parse → chunk → SHA-256 dedup → add → catalog
 │   ├── answer_question.py   # AskInsuranceQuestion: search → rerank → generate
@@ -130,13 +130,13 @@ def get_inventory_use_case() -> GetInventory:
 - [app/domain/interfaces/vector_repository.py](app/domain/interfaces/vector_repository.py) — `VectorRepository` ABC: `add`, `search`, `delete`, `update_metadata` (in-place without re-embedding), `has_document`, `count`.
 - [app/domain/interfaces/document_catalog.py](app/domain/interfaces/document_catalog.py) — `DocumentCatalog` ABC: `register`, `find_by_hash`, `update_metadata(doc_id, seguradora, ano, tipo, ramo)`, `remove`, `list_all`, `total_chunks`.
 - [app/use_cases/ingest_document.py](app/use_cases/ingest_document.py) — `IngestDocument.execute(file_path, metadata, source_name)`. SHA-256 dedup: skip if identical hash+metadata (including `ramo`) / update metadata in-place if content unchanged / full re-index if new. Owns cross-page overlap logic.
-- [app/use_cases/answer_question.py](app/use_cases/answer_question.py) — `AskInsuranceQuestion.execute(question, top_k=15, filter_dict, ...)` → `(answer, reranked_results)`. Emits `DEBUG` logs: "Retrieval: top_k=N solicitado, M chunks retornados" and "Reranking: M → K chunks" for recall debugging.
+- [app/use_cases/answer_question.py](app/use_cases/answer_question.py) — `AskInsuranceQuestion`. Two public methods: `execute(...)` → `(answer, reranked_results)` (non-streaming, used by health/test paths); `execute_stream(...)` → `(reranked_results, Iterator[str])` — does FAISS search + reranking eagerly, returns a lazy text generator for SSE. Both emit `DEBUG` logs for recall debugging.
 - [app/use_cases/get_inventory.py](app/use_cases/get_inventory.py) — `GetInventory.execute()` → `{total_documents, total_chunks, by_seguradora, documents}`.
 - [app/infrastructure/repositories/faiss_repository.py](app/infrastructure/repositories/faiss_repository.py) — `FAISSVectorRepository`: pure vector ops. Composes `SQLiteMetadataStore`. `add` maps `c.metadata.ramo` into the entries dict (bug fix: previously omitted, causing chunks to always store "Desconhecido"). `search` returns `ramo` in `SearchResult`.
 - [app/infrastructure/repositories/sqlite_metadata.py](app/infrastructure/repositories/sqlite_metadata.py) — `SQLiteMetadataStore`: `chunks` table with `COLLATE NOCASE` on `seguradora` and `ramo`. Manages `faiss_pos` renumbering after deletions. `update_document_metadata` patches seguradora/ano/tipo/ramo without touching embeddings.
 - [app/infrastructure/repositories/sqlite_catalog.py](app/infrastructure/repositories/sqlite_catalog.py) — `SQLiteDocumentCatalog`: `documents` table with `COLLATE NOCASE` on `seguradora` and `ramo`. Stores one row per PDF with `file_hash` (SHA-256 UNIQUE), `chunk_count`, `created_at`, `ramo`.
 - [app/infrastructure/chunkers/semantic_chunker.py](app/infrastructure/chunkers/semantic_chunker.py) — `InsuranceSemanticChunker`. `_fixed_chunk` is marked as **Rust/PyO3 optimization target**.
-- [app/infrastructure/gateways/deepseek_gateway.py](app/infrastructure/gateways/deepseek_gateway.py) — `DeepSeekGateway`: wraps `openai` SDK, owns the auditor system prompt (Chain-of-Thought, cross-reference resolution, formula transcription, ramo prioritisation). `_format_context` exposes `[Trecho N | Fonte | Ramo | Pág.]` headers so the model can filter by ramo. `max_tokens=4000`.
+- [app/infrastructure/gateways/deepseek_gateway.py](app/infrastructure/gateways/deepseek_gateway.py) — `DeepSeekGateway`: wraps `openai` SDK, owns the auditor system prompt (Chain-of-Thought, cross-reference resolution, formula transcription, ramo prioritisation). `_format_context` exposes `[Trecho N | Fonte | Ramo | Pág.]` headers so the model can filter by ramo. `max_tokens=4000`. `generate_stream` uses `stream=True` and yields raw token deltas — no retry loop (errors propagate to the route's SSE generator).
 - [app/core/dependencies.py](app/core/dependencies.py) — single wiring point. Exposes `get_ask_use_case`, `get_ingest_use_case`, `get_inventory_use_case`, `get_vector_service`, `get_llm_service`, `get_document_catalog`.
 - [ingest.py](ingest.py) — CLI bulk-ingestion de alta produtividade. Fluxo em 4 fases: coleta de metadados com auto-detect + session memory → resumo do lote com prévia de renomeação → renomeação física → indexação. Usa `get_ingest_use_case()` — caminho idêntico à API.
 
@@ -169,12 +169,27 @@ def get_inventory_use_case() -> GetInventory:
 
 `ramo` está presente em todas as camadas: `InsuranceMetadata`, `Chunk`, `SearchResult`, `DocumentRecord`, tabelas `chunks` e `documents` no SQLite, rotas `/upload` e `/admin/upload` (o endpoint admin valida `ramo` contra `_ALLOWED_RAMOS`).
 
-### /ask request body
+### /ask — SSE streaming
 
+`POST /ask` is a **sync route** (`def`, not `async def`) that returns a `StreamingResponse` with `media_type="text/event-stream"`. FastAPI runs sync routes in a thread pool; Starlette iterates sync generators via `anyio` — both are correct for the fully-sync pipeline (FAISS → SQLite → OpenAI SDK).
+
+Request body:
 ```json
-{ "question": "...", "top_k": 15, "filter": {"seguradora": "Bradesco"} }
+{ "question": "...", "top_k": 15, "filter": {"seguradora": "Bradesco", "ramo": "Agricola"} }
 ```
-`top_k` default 15, clamped 1–20. `filter` optional.
+`top_k` default 15, clamped 1–20. `filter` accepts any combination of `seguradora` and/or `ramo` — both optional. The FAISS search does a generic key-value match on all filter keys.
+
+SSE event sequence:
+```
+data: {"type": "context", "data": [{text, source, page, seguradora, relevance_score}, ...]}\n\n
+data: {"type": "text",    "data": "<token delta>"}\n\n   ← repeated per chunk
+data: {"type": "no_context"}\n\n                          ← if FAISS returns no results
+data: {"type": "error",   "data": "<message>"}\n\n        ← on LLM or pipeline exception
+```
+
+Headers sent: `Cache-Control: no-cache`, `X-Accel-Buffering: no` (prevents nginx/Render buffering).
+
+Frontend SSE parser (`static/app.js`) splits on `/\r?\n\r?\n/` (handles LF and CRLF), finds the `data:` line inside each event block with `/^data:/`, strips the prefix with `replace(/^data:\s?/, '')`, then `JSON.parse`. Parse errors and handler errors are logged to `console.error` separately so they are visible in the browser DevTools console.
 
 ### Deduplication flow (IngestDocument)
 
@@ -270,9 +285,23 @@ Configuração do modelo: `temperature=0.3`, `max_tokens=4000`, `timeout=30s`, `
 - `GET /metrics` — `{"queries_24h": N, "avg_retrieval_ms": X, "avg_llm_ms": Y, "avg_total_ms": Z}`
 - `GET /stats` — includes `"inventory": {"total_documents": N, "total_chunks": N}`
 - Structured JSON logs to stdout:
+  - `"SSE stream iniciado | pergunta='...' top_k=N filter=..."` — emitted when the stream generator starts
+  - `"Filtro recebido via UI: ..."` — emitted at route entry before the generator starts
   - `{"event": "query", "total_ms": ..., "top_k": N, "chunks_returned": K, "filter": ..., "document_type": ...}`
   - `{"event": "query_no_context", "top_k": N, "filter": ..., "document_type": ...}`
+  - `"Erro no streaming LLM: ..."` / `"Erro no SSE stream: ..."` — with full traceback (`exc_info=True`)
 - `LOG_LEVEL=DEBUG` exposes recall logs from the use case:
   - `"Retrieval: top_k=N solicitado, M chunks retornados pelo FAISS."`
   - `"Reranking: M → K chunks após reranking."`
 - `LOG_LEVEL` env var controls verbosity (default `INFO`)
+
+### UI filters (static/index.html + static/app.js)
+
+Two `<select>` dropdowns above the chat input let the user narrow the search before sending a question:
+
+| Dropdown | Element ID | Values |
+|---|---|---|
+| Seguradora | `seguradora-filter` | Todas, Bradesco, Allianz, Porto Seguro, Azul, Tokio Marine, Liberty, Mapfre |
+| Ramo | `ramo-filter` | Todos, Agricola, Automovel, PME, Construcao Civil, Residencial |
+
+`sendQuestion` builds the `filter` object incrementally — only adds a key when the value is non-empty — so selecting "Todas / Todos" sends no filter at all. Both keys can be combined freely.

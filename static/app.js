@@ -361,21 +361,13 @@ document.getElementById('clear-history').addEventListener('click', () => {
 });
 
 // ------------------------------------------------------------------ //
-// Enviar pergunta                                                      //
+// Streaming helpers                                                    //
 // ------------------------------------------------------------------ //
-async function sendQuestion() {
-    const question = chatInput.value.trim();
-    if (!question || isProcessing) return;
-
-    addToHistory(question);
-    addMessage(question, 'user');
-    chatInput.value = '';
-
-    // Indicador de digitação
-    const typingIndicator = document.createElement('div');
-    typingIndicator.id = 'typing-indicator';
-    typingIndicator.className = 'chat-message-assistant mb-3 max-w-[80%] p-4';
-    typingIndicator.innerHTML = `
+function buildTypingIndicator() {
+    const el = document.createElement('div');
+    el.id = 'typing-indicator';
+    el.className = 'chat-message-assistant mb-3 max-w-[80%] p-4';
+    el.innerHTML = `
         <div class="flex items-center space-x-3">
             <div class="bg-blue-100 text-blue-600 p-2 rounded-full flex-shrink-0">
                 <i class="fas fa-robot"></i>
@@ -388,11 +380,92 @@ async function sendQuestion() {
                         <div class="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style="animation-delay:0.1s"></div>
                         <div class="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style="animation-delay:0.2s"></div>
                     </div>
-                    <span>Processando sua pergunta...</span>
+                    <span>Buscando nos documentos...</span>
                 </div>
             </div>
         </div>
     `;
+    return el;
+}
+
+// Creates the assistant message bubble used during streaming.
+// Returns { msgDiv, textDiv } for live updates.
+function buildStreamingBubble(msgId, contextData) {
+    const msgDiv = document.createElement('div');
+    msgDiv.className = 'chat-message-assistant mb-3 max-w-[80%] p-4 fade-in';
+
+    const contextCount = contextData.length;
+    const contextItemsHtml = contextData.map((ctx, i) => `
+        <div class="mb-2 pb-2 border-b border-gray-200 last:border-0">
+            <div class="font-medium text-gray-700">Trecho ${i + 1}
+                <span class="font-normal text-gray-500">— ${escapeHtml(ctx.seguradora || '?')} | Pág. ${escapeHtml(String(ctx.page))} | Score: ${escapeHtml(String(ctx.relevance_score))}</span>
+            </div>
+            <div class="text-gray-600 text-sm mt-0.5">${escapeHtml(ctx.text)}</div>
+        </div>
+    `).join('');
+
+    msgDiv.innerHTML = `
+        <div class="flex items-start space-x-3">
+            <div class="bg-blue-100 text-blue-600 p-2 rounded-full flex-shrink-0">
+                <i class="fas fa-robot"></i>
+            </div>
+            <div class="flex-grow min-w-0">
+                <div class="font-medium text-gray-700 mb-1 text-sm">Assistente</div>
+                <div class="stream-text prose text-gray-800 text-sm"></div>
+                <button class="copy-btn mt-2 text-xs text-gray-400 hover:text-blue-500 transition duration-200 flex items-center space-x-1">
+                    <i class="fas fa-copy"></i><span>Copiar resposta</span>
+                </button>
+                ${contextCount > 0 ? `
+                <div class="text-xs text-gray-500 mt-2">
+                    <i class="fas fa-search mr-1"></i>
+                    Baseado em <strong>${contextCount}</strong> trecho(s) do documento
+                    <button class="show-context-btn ml-2 text-blue-500 hover:text-blue-700 underline">Ver fontes</button>
+                    <div id="context-details-${msgId}" class="hidden mt-2 p-3 bg-gray-50 rounded-lg text-left">
+                        ${contextItemsHtml}
+                    </div>
+                </div>` : ''}
+            </div>
+        </div>
+    `;
+
+    const textDiv = msgDiv.querySelector('.stream-text');
+
+    // Copy button — reads the data-markdown attribute set during streaming
+    msgDiv.querySelector('.copy-btn').addEventListener('click', async () => {
+        try {
+            await navigator.clipboard.writeText(textDiv.dataset.markdown || '');
+            const span = msgDiv.querySelector('.copy-btn span');
+            span.textContent = 'Copiado!';
+            setTimeout(() => { span.textContent = 'Copiar resposta'; }, 2000);
+        } catch (_) {}
+    });
+
+    // Toggle context details
+    if (contextCount > 0) {
+        const toggleBtn = msgDiv.querySelector('.show-context-btn');
+        const detailsDiv = document.getElementById(`context-details-${msgId}`);
+        toggleBtn.addEventListener('click', () => {
+            detailsDiv.classList.toggle('hidden');
+            toggleBtn.textContent = detailsDiv.classList.contains('hidden')
+                ? 'Ver fontes' : 'Ocultar fontes';
+        });
+    }
+
+    return { msgDiv, textDiv };
+}
+
+// ------------------------------------------------------------------ //
+// Enviar pergunta                                                      //
+// ------------------------------------------------------------------ //
+async function sendQuestion() {
+    const question = chatInput.value.trim();
+    if (!question || isProcessing) return;
+
+    addToHistory(question);
+    addMessage(question, 'user');
+    chatInput.value = '';
+
+    const typingIndicator = buildTypingIndicator();
     chatMessages.appendChild(typingIndicator);
     chatMessages.scrollTop = chatMessages.scrollHeight;
 
@@ -401,8 +474,12 @@ async function sendQuestion() {
 
     try {
         const seguradoraFilter = document.getElementById('seguradora-filter').value;
-        const requestBody = { question, top_k: 10 };
-        if (seguradoraFilter) requestBody.filter = { seguradora: seguradoraFilter };
+        const ramoFilter = document.getElementById('ramo-filter').value;
+        const requestBody = { question, top_k: 15 };
+        const filter = {};
+        if (seguradoraFilter) filter.seguradora = seguradoraFilter;
+        if (ramoFilter) filter.ramo = ramoFilter;
+        if (Object.keys(filter).length > 0) requestBody.filter = filter;
         if (selectedDocumentType) requestBody.document_type = selectedDocumentType;
 
         const response = await fetch('/ask', {
@@ -411,49 +488,108 @@ async function sendQuestion() {
             body: JSON.stringify(requestBody)
         });
 
-        const data = await safeParseJson(response);
-        document.getElementById('typing-indicator').remove();
-
-        if (data.success) {
-            addMessage(data.answer, 'assistant');
-
-            if (data.has_context && data.context_used.length > 0) {
-                const msgId = ++messageCounter;
-                const contextInfo = document.createElement('div');
-                contextInfo.className = 'text-xs text-gray-500 mt-2 text-center';
-                contextInfo.innerHTML = `
-                    <i class="fas fa-search mr-1"></i>
-                    Baseado em ${data.context_count} trecho(s) do documento
-                    <button class="show-context-btn ml-2 text-blue-500 hover:text-blue-700 underline" data-msg-id="${msgId}">
-                        Ver detalhes
-                    </button>
-                    <div id="context-details-${msgId}" class="hidden mt-2 p-3 bg-gray-50 rounded-lg text-left">
-                        ${data.context_used.map((ctx, i) => `
-                            <div class="mb-2">
-                                <div class="font-medium">Trecho ${i + 1} (Relevancia: ${escapeHtml(ctx.relevance_score)})</div>
-                                <div class="text-gray-600 text-sm mt-0.5">${escapeHtml(ctx.text)}</div>
-                            </div>
-                        `).join('')}
-                    </div>
-                `;
-
-                const lastMessage = chatMessages.lastElementChild;
-                lastMessage.appendChild(contextInfo);
-
-                const toggleBtn = contextInfo.querySelector('.show-context-btn');
-                const detailsDiv = document.getElementById(`context-details-${msgId}`);
-                toggleBtn.addEventListener('click', () => {
-                    detailsDiv.classList.toggle('hidden');
-                    toggleBtn.textContent = detailsDiv.classList.contains('hidden')
-                        ? 'Ver detalhes'
-                        : 'Ocultar detalhes';
-                });
-            }
-        } else {
-            addMessage('Desculpe, ocorreu um erro ao processar sua pergunta.', 'assistant');
+        // Non-streaming HTTP errors (e.g. 400 validation, 500 before stream starts)
+        if (!response.ok || !response.body) {
+            typingIndicator.remove();
+            const data = await safeParseJson(response);
+            addMessage(`Erro: ${data.detail || `HTTP ${response.status}`}`, 'assistant');
+            return;
         }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let fullText = '';
+        let msgDiv = null;
+        let textDiv = null;
+        const msgId = ++messageCounter;
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+
+            // SSE events are delimited by a blank line (\n\n or \r\n\r\n).
+            // We split on either variant so CRLF responses from proxies work too.
+            const eventBlocks = buffer.split(/\r?\n\r?\n/);
+            buffer = eventBlocks.pop() ?? ''; // keep the incomplete trailing fragment
+
+            for (const block of eventBlocks) {
+                if (!block.trim()) continue;
+
+                // Find the first "data:" line inside the block.
+                // SSE blocks can also carry "event:", "id:", comment lines, etc.
+                let jsonStr = null;
+                for (const line of block.split(/\r?\n/)) {
+                    if (/^data:/.test(line)) {
+                        // Strip "data:" and any single leading space (per SSE spec)
+                        jsonStr = line.replace(/^data:\s?/, '');
+                        break;
+                    }
+                }
+                if (jsonStr === null || jsonStr === '') continue;
+
+                let event;
+                try {
+                    event = JSON.parse(jsonStr);
+                } catch (parseErr) {
+                    console.error('[SSE] JSON.parse falhou:', parseErr, '| raw:', jsonStr);
+                    continue;
+                }
+
+                try {
+                    if (event.type === 'context') {
+                        typingIndicator.remove();
+                        ({ msgDiv, textDiv } = buildStreamingBubble(msgId, event.data));
+                        chatMessages.appendChild(msgDiv);
+                        chatMessages.scrollTop = chatMessages.scrollHeight;
+
+                    } else if (event.type === 'text') {
+                        // Guard: text before context on very fast responses
+                        if (!msgDiv) {
+                            typingIndicator.remove();
+                            ({ msgDiv, textDiv } = buildStreamingBubble(msgId, []));
+                            chatMessages.appendChild(msgDiv);
+                        }
+                        fullText += event.data;
+                        textDiv.dataset.markdown = fullText;
+                        textDiv.innerHTML = marked.parse(fullText);
+                        chatMessages.scrollTop = chatMessages.scrollHeight;
+
+                    } else if (event.type === 'no_context') {
+                        typingIndicator.remove();
+                        addMessage(
+                            'Nao encontrei informacoes relevantes nos documentos filtrados para responder sua pergunta.',
+                            'assistant'
+                        );
+
+                    } else if (event.type === 'error') {
+                        if (typingIndicator.parentNode) typingIndicator.remove();
+                        console.error('[SSE] Evento de erro recebido do servidor:', event.data);
+                        addMessage(`Erro ao processar: ${escapeHtml(String(event.data))}`, 'assistant');
+                    }
+                } catch (handlerErr) {
+                    console.error('[SSE] Erro ao processar evento:', handlerErr, '| event:', event);
+                }
+            }
+        }
+
+        // If the stream ended without any event (empty body / aborted connection),
+        // remove the spinner that would otherwise be stuck on screen.
+        if (typingIndicator.parentNode) {
+            typingIndicator.remove();
+            addMessage('A resposta chegou vazia. Tente novamente.', 'assistant');
+        }
+
+        // Re-render final markdown to ensure no partial Markdown tokens remain
+        if (textDiv && fullText) {
+            textDiv.innerHTML = marked.parse(fullText);
+        }
+
     } catch (error) {
-        console.error('Erro:', error);
+        console.error('[sendQuestion] Erro inesperado:', error);
+        console.error('[sendQuestion] Stack:', error?.stack);
         document.getElementById('typing-indicator')?.remove();
         addMessage('Erro de conexao com o servidor. Verifique se o servidor esta rodando.', 'assistant');
     } finally {

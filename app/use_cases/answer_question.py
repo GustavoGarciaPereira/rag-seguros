@@ -7,7 +7,7 @@ As três etapas são injetadas como interfaces — o use case não conhece
 FAISS, DeepSeek nem nenhuma implementação concreta.
 """
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 from app.domain.entities.document import SearchResult
 from app.domain.interfaces.llm_gateway import LLMGateway
@@ -82,3 +82,47 @@ class AskInsuranceQuestion:
             document_type=document_type,
         )
         return answer, reranked
+
+    def execute_stream(
+        self,
+        question: str,
+        top_k: int = 15,
+        filter_dict: Optional[Dict[str, Any]] = None,
+        seguradora: Optional[str] = None,
+        document_type: Optional[str] = None,
+    ) -> Tuple[List[SearchResult], Iterator[str]]:
+        """Executa busca + reranking e devolve os chunks e um gerador de texto.
+
+        Returns:
+            ``(reranked_results, text_stream)`` — text_stream é um gerador que
+            cede deltas de texto conforme a API responde. Se não houver contexto,
+            retorna ``([], iter([]))``.
+        """
+        raw_results = self._vector_repo.search(
+            question, n_results=top_k, filter_dict=filter_dict
+        )
+
+        logger.debug(
+            "Retrieval: top_k=%d solicitado, %d chunks retornados pelo FAISS.",
+            top_k,
+            len(raw_results),
+        )
+
+        if not raw_results:
+            return [], iter([])
+
+        reranked = self._reranker.rerank(question, raw_results)
+
+        logger.debug(
+            "Reranking: %d → %d chunks após reranking.",
+            len(raw_results),
+            len(reranked),
+        )
+
+        text_stream = self._llm.generate_stream(
+            question,
+            reranked,
+            seguradora=seguradora,
+            document_type=document_type,
+        )
+        return reranked, text_stream

@@ -1,9 +1,10 @@
 import json as _json
 import logging
 import time as _time
+from typing import Generator
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import StreamingResponse
 
 from app.core.config import ALLOWED_DOCUMENT_TYPES
 from app.core.dependencies import get_ask_use_case
@@ -16,11 +17,17 @@ logger = logging.getLogger("rag")
 
 
 @router.post("/ask")
-async def ask_question(
+def ask_question(
     data: AskRequest,
     use_case: AskInsuranceQuestion = Depends(get_ask_use_case),
 ):
     """Pergunta sobre os documentos indexados com suporte a filtro.
+
+    Retorna Server-Sent Events:
+    - ``{"type": "context", "data": [...]}`` — metadados dos trechos recuperados
+    - ``{"type": "text", "data": "..."}``    — deltas de texto da resposta
+    - ``{"type": "no_context"}``             — nenhum trecho encontrado
+    - ``{"type": "error", "data": "..."}``   — erro durante o processamento
 
     Body: ``{"question": "...", "top_k": 15, "filter": {"seguradora": "Bradesco"}}``
     """
@@ -31,78 +38,85 @@ async def ask_question(
         )
 
     seguradora = data.filter.get("seguradora") if data.filter else None
+    logger.info("Filtro recebido via UI: %s", data.filter)
 
-    t0 = _time.perf_counter()
-    try:
-        t1 = _time.perf_counter()
-        answer, context = use_case.execute(
-            question=data.question,
-            top_k=data.top_k,
-            filter_dict=data.filter,
-            seguradora=seguradora,
-            document_type=data.document_type,
+    def sse_stream() -> Generator[str, None, None]:
+        # execute_stream is a plain sync method — safe to call from a sync generator.
+        logger.info(
+            "SSE stream iniciado | pergunta='%s...' top_k=%d filter=%s",
+            data.question[:60],
+            data.top_k,
+            data.filter,
         )
-        total_elapsed = (_time.perf_counter() - t1) * 1000
+        t0 = _time.perf_counter()
+        try:
+            reranked, text_stream = use_case.execute_stream(
+                question=data.question,
+                top_k=data.top_k,
+                filter_dict=data.filter,
+                seguradora=seguradora,
+                document_type=data.document_type,
+            )
 
-        if answer is None:
+            if not reranked:
+                logger.info(
+                    _json.dumps(
+                        {
+                            "event": "query_no_context",
+                            "top_k": data.top_k,
+                            "filter": data.filter,
+                            "document_type": data.document_type,
+                        }
+                    )
+                )
+                yield f"data: {_json.dumps({'type': 'no_context'})}\n\n"
+                return
+
+            context_preview = [
+                {
+                    "text": ctx.text[:200] + "..." if len(ctx.text) > 200 else ctx.text,
+                    "source": ctx.source,
+                    "page": ctx.page,
+                    "seguradora": ctx.seguradora,
+                    "relevance_score": round(ctx.relevance_score, 3),
+                }
+                for ctx in reranked
+            ]
+            yield f"data: {_json.dumps({'type': 'context', 'data': context_preview})}\n\n"
+
+            try:
+                for chunk in text_stream:
+                    if chunk:
+                        yield f"data: {_json.dumps({'type': 'text', 'data': chunk})}\n\n"
+            except Exception as stream_exc:
+                logger.error("Erro no streaming LLM: %s", stream_exc, exc_info=True)
+                yield f"data: {_json.dumps({'type': 'error', 'data': str(stream_exc)})}\n\n"
+                return
+
+            total_ms = (_time.perf_counter() - t0) * 1000
+            metrics.record(0.0, total_ms)
             logger.info(
                 _json.dumps(
                     {
-                        "event": "query_no_context",
+                        "event": "query",
+                        "total_ms": round(total_ms, 1),
                         "top_k": data.top_k,
+                        "chunks_returned": len(reranked),
                         "filter": data.filter,
                         "document_type": data.document_type,
                     }
                 )
             )
-            return JSONResponse(
-                {
-                    "success": True,
-                    "answer": "Não encontrei informações relevantes nos documentos filtrados para responder sua pergunta.",
-                    "context_used": [],
-                    "has_context": False,
-                }
-            )
 
-        # Separa latências de forma aproximada (retrieval+rerank vs. geração)
-        # A medição exata ficou no use case; aqui apenas registramos o total.
-        retrieval_ms = 0.0
-        llm_ms = total_elapsed
-        metrics.record(retrieval_ms, llm_ms)
+        except Exception as exc:
+            logger.error("Erro no SSE stream: %s", exc, exc_info=True)
+            yield f"data: {_json.dumps({'type': 'error', 'data': str(exc)})}\n\n"
 
-        logger.info(
-            _json.dumps(
-                {
-                    "event": "query",
-                    "total_ms": round(total_elapsed, 1),
-                    "top_k": data.top_k,
-                    "chunks_returned": len(context),
-                    "filter": data.filter,
-                    "document_type": data.document_type,
-                }
-            )
-        )
-
-        context_preview = [
-            {
-                "text": ctx.text[:200] + "..." if len(ctx.text) > 200 else ctx.text,
-                "source": ctx.source,
-                "page": ctx.page,
-                "seguradora": ctx.seguradora,
-                "relevance_score": round(ctx.relevance_score, 3),
-            }
-            for ctx in context
-        ]
-
-        return JSONResponse(
-            {
-                "success": True,
-                "answer": answer,
-                "context_used": context_preview,
-                "has_context": True,
-                "context_count": len(context),
-            }
-        )
-
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Erro ao processar pergunta: {exc}")
+    return StreamingResponse(
+        sse_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
