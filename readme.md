@@ -98,13 +98,3 @@ A IA é instruída a seguir um protocolo de 4 etapas antes de responder:
 
 Projeto desenvolvido por **Gustavo Garcia Pereira**.
 Focado em aplicar Inteligência Artificial para resolver problemas reais do mercado de seguros brasileiro.
-
----
-
-### O que mudou nesse README:
-1.  **Enfoque no "Auditor":** Dei destaque para a lógica de análise prévia e transcrição de fórmulas.
-2.  **Explicação do Ramo:** Agora o usuário entende por que existem os filtros de Agrícola, PME, etc.
-3.  **Melhoria no Guia de Ingestão:** O `ingest.py` é uma ferramenta poderosa e agora está bem explicada.
-4.  **Docker no Render:** Expliquei por que o `faiss_db/` precisa ser commitado.
-
-**Curtiu a nova cara do README?** Se quiser mudar algum termo ou adicionar mais alguma métrica, é só falar! Se estiver OK, já pode dar aquele `git commit` e atualizar o repositório. 🚀
