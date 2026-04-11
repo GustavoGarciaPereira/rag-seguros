@@ -57,7 +57,7 @@ app/
 ├── domain/
 │   ├── entities/
 │   │   ├── document.py      # InsuranceMetadata (VO), Chunk, SearchResult, ParsedPage, DocumentRecord
-│   │   └── insurance.py     # Seguradora (str Enum), DocumentType (str Enum)
+│   │   └── insurance.py     # Seguradora (str Enum), DocumentType (str Enum), Ramo (str Enum)
 │   └── interfaces/
 │       ├── text_chunker.py       # TextChunker ABC
 │       ├── reranker.py           # Reranker ABC
@@ -125,20 +125,20 @@ def get_inventory_use_case() -> GetInventory:
 
 ### Key files
 
-- [app/domain/entities/insurance.py](app/domain/entities/insurance.py) — `Seguradora` and `DocumentType` as `str, Enum`. `Seguradora.allowed_for_admin()` returns the allowlist used by `/admin/upload`. `config.py` derives `ALLOWED_SEGURADORAS` / `ALLOWED_DOCUMENT_TYPES` from these — no magic strings anywhere.
-- [app/domain/entities/document.py](app/domain/entities/document.py) — `InsuranceMetadata` Value Object, `Chunk`, `SearchResult`, `ParsedPage`, `DocumentRecord` (catalog entry with `file_hash`, `chunk_count`, `created_at`).
+- [app/domain/entities/insurance.py](app/domain/entities/insurance.py) — `Seguradora`, `DocumentType`, and `Ramo` as `str, Enum`. `Seguradora.allowed_for_admin()` returns the allowlist used by `/admin/upload`. `config.py` derives `ALLOWED_SEGURADORAS` / `ALLOWED_DOCUMENT_TYPES` from these — no magic strings anywhere.
+- [app/domain/entities/document.py](app/domain/entities/document.py) — `InsuranceMetadata` Value Object (fields: `seguradora`, `ano`, `tipo`, `ramo`), `Chunk`, `SearchResult`, `ParsedPage`, `DocumentRecord` (catalog entry with `file_hash`, `chunk_count`, `created_at`, `ramo`).
 - [app/domain/interfaces/vector_repository.py](app/domain/interfaces/vector_repository.py) — `VectorRepository` ABC: `add`, `search`, `delete`, `update_metadata` (in-place without re-embedding), `has_document`, `count`.
-- [app/domain/interfaces/document_catalog.py](app/domain/interfaces/document_catalog.py) — `DocumentCatalog` ABC: `register`, `find_by_hash`, `update_metadata`, `remove`, `list_all`, `total_chunks`.
-- [app/use_cases/ingest_document.py](app/use_cases/ingest_document.py) — `IngestDocument.execute(file_path, metadata, source_name)`. SHA-256 dedup: skip if identical hash+metadata / update metadata in-place if content unchanged / full re-index if new. Owns cross-page overlap logic.
+- [app/domain/interfaces/document_catalog.py](app/domain/interfaces/document_catalog.py) — `DocumentCatalog` ABC: `register`, `find_by_hash`, `update_metadata(doc_id, seguradora, ano, tipo, ramo)`, `remove`, `list_all`, `total_chunks`.
+- [app/use_cases/ingest_document.py](app/use_cases/ingest_document.py) — `IngestDocument.execute(file_path, metadata, source_name)`. SHA-256 dedup: skip if identical hash+metadata (including `ramo`) / update metadata in-place if content unchanged / full re-index if new. Owns cross-page overlap logic.
 - [app/use_cases/answer_question.py](app/use_cases/answer_question.py) — `AskInsuranceQuestion.execute(question, top_k, filter_dict, ...)` → `(answer, reranked_results)`.
 - [app/use_cases/get_inventory.py](app/use_cases/get_inventory.py) — `GetInventory.execute()` → `{total_documents, total_chunks, by_seguradora, documents}`.
 - [app/infrastructure/repositories/faiss_repository.py](app/infrastructure/repositories/faiss_repository.py) — `FAISSVectorRepository`: pure vector ops. Composes `SQLiteMetadataStore`. Auto-migrates legacy `metadata.pkl` to SQLite on first load.
-- [app/infrastructure/repositories/sqlite_metadata.py](app/infrastructure/repositories/sqlite_metadata.py) — `SQLiteMetadataStore`: `chunks` table. Manages `faiss_pos` renumbering after deletions. `update_document_metadata` patches seguradora/ano/tipo without touching embeddings.
-- [app/infrastructure/repositories/sqlite_catalog.py](app/infrastructure/repositories/sqlite_catalog.py) — `SQLiteDocumentCatalog`: `documents` table in the same `metadata.db`. Stores one row per PDF with `file_hash` (SHA-256 UNIQUE), `chunk_count`, `created_at`.
+- [app/infrastructure/repositories/sqlite_metadata.py](app/infrastructure/repositories/sqlite_metadata.py) — `SQLiteMetadataStore`: `chunks` table. Manages `faiss_pos` renumbering after deletions. `update_document_metadata` patches seguradora/ano/tipo/ramo without touching embeddings.
+- [app/infrastructure/repositories/sqlite_catalog.py](app/infrastructure/repositories/sqlite_catalog.py) — `SQLiteDocumentCatalog`: `documents` table in the same `metadata.db`. Stores one row per PDF with `file_hash` (SHA-256 UNIQUE), `chunk_count`, `created_at`, `ramo`.
 - [app/infrastructure/chunkers/semantic_chunker.py](app/infrastructure/chunkers/semantic_chunker.py) — `InsuranceSemanticChunker`. `_fixed_chunk` is marked as **Rust/PyO3 optimization target**.
 - [app/infrastructure/gateways/deepseek_gateway.py](app/infrastructure/gateways/deepseek_gateway.py) — `DeepSeekGateway`: wraps `openai` SDK, owns the auditor system prompt, formats `List[SearchResult]` into the LLM context string.
 - [app/core/dependencies.py](app/core/dependencies.py) — single wiring point. Exposes `get_ask_use_case`, `get_ingest_use_case`, `get_inventory_use_case`, `get_vector_service`, `get_llm_service`, `get_document_catalog`.
-- [ingest.py](ingest.py) — CLI bulk-ingestion. Uses `get_ingest_use_case()` — identical code path to the API. Validates via `Seguradora` and `DocumentType` enums.
+- [ingest.py](ingest.py) — CLI bulk-ingestion de alta produtividade. Fluxo em 4 fases: coleta de metadados com auto-detect + session memory → resumo do lote com prévia de renomeação → renomeação física → indexação. Usa `get_ingest_use_case()` — caminho idêntico à API.
 
 ### API endpoints
 
@@ -153,6 +153,21 @@ def get_inventory_use_case() -> GetInventory:
 | `POST` | `/admin/upload` | Validated upload (requires `X-Admin-Key`, seguradora from allowlist) |
 | `POST` | `/ask` | RAG query |
 | `GET` | `/api/inventory` | Document catalog grouped by seguradora |
+
+### Ramo enum
+
+`Ramo` (`app/domain/entities/insurance.py`) diferencia manuais de ramos distintos para evitar confusão entre, por exemplo, Agrícola e Construção Civil da mesma seguradora:
+
+| Valor | Descrição |
+|---|---|
+| `Agricola` | Seguro agrícola / rural |
+| `Automovel` | Seguro de automóvel |
+| `PME` | Seguro para pequenas e médias empresas |
+| `Construcao Civil` | Riscos de engenharia / construção civil |
+| `Residencial` | Seguro residencial |
+| `Desconhecido` | Ramo não identificado (padrão) |
+
+`ramo` está presente em todas as camadas: `InsuranceMetadata`, `Chunk`, `SearchResult`, `DocumentRecord`, tabelas `chunks` e `documents` no SQLite, rotas `/upload` e `/admin/upload` (o endpoint admin valida `ramo` contra `_ALLOWED_RAMOS`).
 
 ### /ask request body
 
@@ -176,8 +191,8 @@ Both files live in `faiss_db/` and are **committed to the repo** so Render free-
 
 - `faiss_db/faiss_index.bin` — FAISS binary index (vectors only)
 - `faiss_db/metadata.db` — SQLite with two tables:
-  - `chunks(faiss_pos, doc_id, text, source, page, seguradora, ano, tipo, chunk_index)` — managed by `SQLiteMetadataStore`
-  - `documents(doc_id PK, source_name, file_hash UNIQUE, seguradora, ano, tipo, chunk_count, created_at)` — managed by `SQLiteDocumentCatalog`
+  - `chunks(faiss_pos, doc_id, text, source, page, seguradora, ano, tipo, ramo, chunk_index)` — managed by `SQLiteMetadataStore`
+  - `documents(doc_id PK, source_name, file_hash UNIQUE, seguradora, ano, tipo, ramo, chunk_count, created_at)` — managed by `SQLiteDocumentCatalog`
 - Legacy `faiss_db/metadata.pkl` is auto-migrated to `chunks` table on first startup if `metadata.db` is empty
 
 ### Docker / Render deploy
@@ -190,6 +205,43 @@ CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1
 ```
 
 `HF_HOME=/app/model_cache` keeps the Hugging Face cache at a predictable path inside the container.
+
+### ingest.py — CLI de alta produtividade
+
+Fluxo em 4 fases (nenhum arquivo é tocado até a confirmação do usuário):
+
+```
+Fase 1 — Coleta de metadados (por arquivo)
+  ├─ Auto-detect: busca Seguradora / Ramo / Ano no nome do arquivo por substring
+  │   normalizada (case-insensitive, sem underscores/hífens).
+  │   Enums ordenados do mais longo ao mais curto para evitar falsos positivos.
+  ├─ Session memory: se nada foi detectado, oferece o valor do arquivo anterior
+  │   como padrão — útil para lotes da mesma seguradora.
+  └─ Confirmação rápida: Enter aceita a sugestão/padrão; qualquer outro valor
+      é resolvido como índice numérico ou nome (case-insensitive).
+
+Fase 2 — Resumo do lote
+  ├─ Tabela com Arquivo / Seguradora / Ramo / Ano / Tipo.
+  ├─ Seção "Renomeação prevista": lista orig → novo para todos os arquivos
+  │   que mudarão de nome.
+  └─ Pergunta S/n — 'n' cancela sem nenhum efeito colateral.
+
+Fase 3 — Renomeação física (apenas após confirmação)
+  ├─ Novo nome: {Seguradora}_{Ramo}_{Tipo}_{Ano}_{suffix5}.pdf
+  │   suffix5 = primeiros 5 hex do SHA-1 do stem original (determinístico).
+  │   Espaços → underscores; caracteres especiais removidos (re.ASCII).
+  ├─ Se src == dst → skip silencioso (re-run seguro).
+  ├─ Se dst já existe e é diferente → aviso + mantém nome original.
+  └─ OSError (permissão, arquivo aberto) → aviso + mantém nome original.
+
+Fase 4 — Indexação (get_ingest_use_case importado apenas aqui)
+  ├─ FAISS e o modelo de embeddings só são carregados se o usuário confirmou.
+  ├─ source_name passado ao IngestDocument já reflete o nome renomeado.
+  └─ Erros por arquivo são capturados; o lote continua e o relatório final
+      lista as falhas.
+```
+
+Exemplo de nome gerado: `Bradesco_Agricola_Cobertura_2025_559ae.pdf`
 
 ### Observability
 
