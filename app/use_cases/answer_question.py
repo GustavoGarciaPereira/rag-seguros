@@ -51,25 +51,25 @@ class AskInsuranceQuestion:
             ``(answer, reranked_results)`` — answer é None quando não há
             contexto suficiente para responder.
         """
-        # Etapa 1: recuperação vetorial
+        # Etapa 1: recuperação vetorial com oversampling (fetch_k = top_k * 4)
+        fetch_k = top_k * 4
         raw_results = self._vector_repo.search(
-            question, n_results=top_k, filter_dict=filter_dict
+            question, n_results=fetch_k, filter_dict=filter_dict
         )
 
         logger.debug(
-            "Retrieval: top_k=%d solicitado, %d chunks retornados pelo FAISS.",
-            top_k,
+            "Retrieval: %d chunks retornados pelo FAISS.",
             len(raw_results),
         )
 
         if not raw_results:
             return None, []
 
-        # Etapa 2: reranking por sobreposição de termos
-        reranked = self._reranker.rerank(question, raw_results)
+        # Etapa 2: reranking por sobreposição de termos + slice final
+        reranked = self._reranker.rerank(question, raw_results)[:top_k]
 
         logger.debug(
-            "Reranking: %d → %d chunks após reranking.",
+            "Reranking: %d avaliados, top %d retidos para o LLM.",
             len(raw_results),
             len(reranked),
         )
@@ -98,23 +98,23 @@ class AskInsuranceQuestion:
             cede deltas de texto conforme a API responde. Se não houver contexto,
             retorna ``([], iter([]))``.
         """
+        fetch_k = top_k * 4
         raw_results = self._vector_repo.search(
-            question, n_results=top_k, filter_dict=filter_dict
+            question, n_results=fetch_k, filter_dict=filter_dict
         )
 
         logger.debug(
-            "Retrieval: top_k=%d solicitado, %d chunks retornados pelo FAISS.",
-            top_k,
+            "Retrieval: %d chunks retornados pelo FAISS.",
             len(raw_results),
         )
 
         if not raw_results:
             return [], iter([])
 
-        reranked = self._reranker.rerank(question, raw_results)
+        reranked = self._reranker.rerank(question, raw_results)[:top_k]
 
         logger.debug(
-            "Reranking: %d → %d chunks após reranking.",
+            "Reranking: %d avaliados, top %d retidos para o LLM.",
             len(raw_results),
             len(reranked),
         )

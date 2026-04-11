@@ -155,6 +155,24 @@ class FAISSVectorRepository(VectorRepository):
         faiss.write_index(self.index, self.index_path)
         return removed
 
+    def delete_all(self) -> int:
+        """Apaga todos os chunks do índice FAISS e da tabela SQLite.
+
+        Útil para re-indexação completa sem precisar deletar os arquivos em
+        disco manualmente.  A tabela ``documents`` (catálogo) não é tocada
+        aqui — quem precisar limpar o catálogo deve chamar
+        ``SQLiteDocumentCatalog`` diretamente.
+
+        Returns:
+            Número de chunks removidos.
+        """
+        removed = self._meta.count()
+        self.index = faiss.IndexFlatL2(self.EMBEDDING_DIM)
+        self._meta.truncate_all()
+        faiss.write_index(self.index, self.index_path)
+        logger.info("delete_all: %d chunk(s) removidos do índice.", removed)
+        return removed
+
     def update_metadata(self, document_id: str, metadata: InsuranceMetadata) -> bool:
         return self._meta.update_document_metadata(
             document_id, metadata.seguradora, metadata.ano, metadata.tipo, metadata.ramo

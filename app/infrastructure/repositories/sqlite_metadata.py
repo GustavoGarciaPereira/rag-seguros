@@ -178,6 +178,16 @@ class SQLiteMetadataStore:
 
         return removed, [row["text"] for row in remaining_rows]
 
+    def truncate_all(self) -> None:
+        """Remove todos os chunks da tabela.
+
+        Usado por :meth:`FAISSVectorRepository.delete_all` antes de uma
+        re-indexação completa.  O próximo ``insert_many`` partirá de
+        ``faiss_pos = 0`` automaticamente (``COALESCE(MAX+1, 0)``).
+        """
+        with self._conn() as conn:
+            conn.execute("DELETE FROM chunks")
+
     # ------------------------------------------------------------------
     # Migration from legacy pickle
     # ------------------------------------------------------------------
