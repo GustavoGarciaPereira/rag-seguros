@@ -13,6 +13,12 @@ python run.py
 
 # Bulk-ingest PDFs interactively (uses the same IngestDocument use case as the API)
 python ingest.py [--pdf-dir ./pdfs]
+
+# Wipe index and re-index all PDFs from scratch (non-interactive, uses filename auto-detect)
+python reindex.py [--pdf-dir ./pdfs] [--yes]
+
+# Retrieval quality regression test (no pytest, exit 0 = pass, exit 1 = fail)
+python test_regression.py
 ```
 
 The server runs at `http://localhost:8000`. API docs are auto-generated at `/docs`.
@@ -35,10 +41,10 @@ LOG_LEVEL=INFO   # DEBUG | INFO | WARNING | ERROR
 RAG (Retrieval-Augmented Generation) API for insurance document analysis built on **Clean Architecture**. The full pipeline is:
 
 1. **PDF Upload** → `PdfDocumentParser` extracts text page-by-page (`pypdf`)
-2. **Chunking** → `InsuranceSemanticChunker` splits at clause/paragraph/article boundaries (1200-char target, 200-char overlap); cross-page overlap is handled inside `IngestDocument`
+2. **Chunking** → `InsuranceSemanticChunker` splits at clause/paragraph/article boundaries (1200-char target, 200-char overlap); cross-page overlap is handled inside `IngestDocument`. Each chunk is prefixed with its parent section title (`[SEÇÃO: <título>]\n`) to improve semantic score of tables and lists relative to dense paragraphs.
 3. **Deduplication** → `IngestDocument` computes SHA-256 of the file; if hash exists in the `DocumentCatalog`, skips re-embedding or only updates metadata in-place
 4. **Vectorization** → `FAISSVectorRepository` encodes chunks with `sentence-transformers` (`all-MiniLM-L6-v2`, 384-dim) and persists to FAISS + SQLite
-5. **Query** → `AskInsuranceQuestion`: FAISS top-K (default 15) → `KeywordOverlapReranker` (70% semantic + 30% PT term overlap) → `DeepSeekGateway`
+5. **Query** → `AskInsuranceQuestion`: FAISS fetch_k (= top_k × 4, default 60) → `KeywordOverlapReranker` (70% semantic + 30% PT term overlap) → slice top_k → `DeepSeekGateway`
 6. **Generation** → DeepSeek `deepseek-chat` via **SSE streaming** (`stream=True`); 4-section audit response with Chain-of-Thought (Análise Prévia Silenciosa), cross-reference resolution and formula transcription; max_tokens 4000, timeout 30s, 3 retries with exponential backoff (non-streaming path only)
 
 ### Layer responsibilities
@@ -130,15 +136,18 @@ def get_inventory_use_case() -> GetInventory:
 - [app/domain/interfaces/vector_repository.py](app/domain/interfaces/vector_repository.py) — `VectorRepository` ABC: `add`, `search`, `delete`, `update_metadata` (in-place without re-embedding), `has_document`, `count`.
 - [app/domain/interfaces/document_catalog.py](app/domain/interfaces/document_catalog.py) — `DocumentCatalog` ABC: `register`, `find_by_hash`, `update_metadata(doc_id, seguradora, ano, tipo, ramo)`, `remove`, `list_all`, `total_chunks`.
 - [app/use_cases/ingest_document.py](app/use_cases/ingest_document.py) — `IngestDocument.execute(file_path, metadata, source_name)`. SHA-256 dedup: skip if identical hash+metadata (including `ramo`) / update metadata in-place if content unchanged / full re-index if new. Owns cross-page overlap logic.
-- [app/use_cases/answer_question.py](app/use_cases/answer_question.py) — `AskInsuranceQuestion`. Two public methods: `execute(...)` → `(answer, reranked_results)` (non-streaming, used by health/test paths); `execute_stream(...)` → `(reranked_results, Iterator[str])` — does FAISS search + reranking eagerly, returns a lazy text generator for SSE. Both emit `DEBUG` logs for recall debugging.
+- [app/use_cases/answer_question.py](app/use_cases/answer_question.py) — `AskInsuranceQuestion`. Two public methods: `execute(...)` → `(answer, reranked_results)` (non-streaming, used by health/test paths); `execute_stream(...)` → `(reranked_results, Iterator[str])` — does FAISS search + reranking eagerly, returns a lazy text generator for SSE. Both implement **oversampling**: FAISS is queried with `fetch_k = top_k * 4`, the reranker scores all candidates, and a final `[:top_k]` slice keeps only the best results for the LLM. Both emit `DEBUG` logs for recall debugging.
 - [app/use_cases/get_inventory.py](app/use_cases/get_inventory.py) — `GetInventory.execute()` → `{total_documents, total_chunks, by_seguradora, documents}`.
-- [app/infrastructure/repositories/faiss_repository.py](app/infrastructure/repositories/faiss_repository.py) — `FAISSVectorRepository`: pure vector ops. Composes `SQLiteMetadataStore`. `add` maps `c.metadata.ramo` into the entries dict (bug fix: previously omitted, causing chunks to always store "Desconhecido"). `search` returns `ramo` in `SearchResult`.
-- [app/infrastructure/repositories/sqlite_metadata.py](app/infrastructure/repositories/sqlite_metadata.py) — `SQLiteMetadataStore`: `chunks` table with `COLLATE NOCASE` on `seguradora` and `ramo`. Manages `faiss_pos` renumbering after deletions. `update_document_metadata` patches seguradora/ano/tipo/ramo without touching embeddings.
+- [app/infrastructure/repositories/faiss_repository.py](app/infrastructure/repositories/faiss_repository.py) — `FAISSVectorRepository`: pure vector ops. Composes `SQLiteMetadataStore`. `add` maps `c.metadata.ramo` into the entries dict (bug fix: previously omitted, causing chunks to always store "Desconhecido"). `search` returns `ramo` in `SearchResult`. `delete_all()` resets the FAISS index + truncates the `chunks` table — does not touch `documents`.
+- [app/infrastructure/repositories/sqlite_metadata.py](app/infrastructure/repositories/sqlite_metadata.py) — `SQLiteMetadataStore`: `chunks` table with `COLLATE NOCASE` on `seguradora` and `ramo`. Manages `faiss_pos` renumbering after deletions. `update_document_metadata` patches seguradora/ano/tipo/ramo without touching embeddings. `truncate_all()` removes all rows; next `insert_many` restarts from `faiss_pos = 0`.
 - [app/infrastructure/repositories/sqlite_catalog.py](app/infrastructure/repositories/sqlite_catalog.py) — `SQLiteDocumentCatalog`: `documents` table with `COLLATE NOCASE` on `seguradora` and `ramo`. Stores one row per PDF with `file_hash` (SHA-256 UNIQUE), `chunk_count`, `created_at`, `ramo`.
-- [app/infrastructure/chunkers/semantic_chunker.py](app/infrastructure/chunkers/semantic_chunker.py) — `InsuranceSemanticChunker`. `_fixed_chunk` is marked as **Rust/PyO3 optimization target**.
+- [app/infrastructure/chunkers/semantic_chunker.py](app/infrastructure/chunkers/semantic_chunker.py) — `InsuranceSemanticChunker`. `_fixed_chunk` is marked as **Rust/PyO3 optimization target**. Module-level helpers: `_SECTION_TITLE_RE` (regex for Art., SEÇÃO, CAPÍTULO, CLÁUSULA, roman numerals, etc.), `_is_section_title(text)` (regex match OR all-caps ≥2-word heuristic ≤80 chars), `_apply_section_prefix(chunk_text, section_title)` (prepends `[SEÇÃO: <título>]\n`; skipped if the chunk already opens with the title). `_merge_segments` tracks `last_section` / `chunk_section` to inject the prefix into every output chunk.
 - [app/infrastructure/gateways/deepseek_gateway.py](app/infrastructure/gateways/deepseek_gateway.py) — `DeepSeekGateway`: wraps `openai` SDK, owns the auditor system prompt (Chain-of-Thought, cross-reference resolution, formula transcription, ramo prioritisation). `_format_context` exposes `[Trecho N | Fonte | Ramo | Pág.]` headers so the model can filter by ramo. `max_tokens=4000`. `generate_stream` uses `stream=True` and yields raw token deltas — no retry loop (errors propagate to the route's SSE generator).
 - [app/core/dependencies.py](app/core/dependencies.py) — single wiring point. Exposes `get_ask_use_case`, `get_ingest_use_case`, `get_inventory_use_case`, `get_vector_service`, `get_llm_service`, `get_document_catalog`.
 - [ingest.py](ingest.py) — CLI bulk-ingestion de alta produtividade. Fluxo em 4 fases: coleta de metadados com auto-detect + session memory → resumo do lote com prévia de renomeação → renomeação física → indexação. Usa `get_ingest_use_case()` — caminho idêntico à API.
+- [reindex.py](reindex.py) — re-indexação completa não-interativa. Exibe tabela de prévia com metadados auto-detectados pelo nome do arquivo, pede confirmação (ou `--yes`), apaga `faiss_index.bin` + `metadata.db` inteiros, depois indexa todos os PDFs de `--pdf-dir`. Import de `get_ingest_use_case` é deferido para após o wipe — garante que os `lru_cache` singletons sejam criados com os arquivos ausentes (índice vazio). Útil após mudanças no chunker que exigem re-embedding completo.
+- [test_regression.py](test_regression.py) — script standalone de regressão de qualidade de recuperação (sem pytest). Chama `get_ask_use_case().execute()` diretamente com a query "carro reserva", `filter={"ramo": "Automovel"}`, `top_k=15`. Marca ✅ chunks que contêm termos-alvo, imprime tabela com rank/score/fonte/snippet. Exit 0 se ≥5 chunks relevantes, exit 1 caso contrário.
+- [tests/test_semantic_chunker.py](tests/test_semantic_chunker.py) — 16 testes unitários para o chunker: `TestIsSectionTitle` (9 casos), `TestApplySectionPrefix` (3 casos), `TestInsuranceSemanticChunker` (4 casos de integração). Rode com `python -m pytest tests/`.
 
 ### API endpoints
 
@@ -221,6 +230,44 @@ CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1
 
 `HF_HOME=/app/model_cache` keeps the Hugging Face cache at a predictable path inside the container.
 
+### Section-header injection (InsuranceSemanticChunker)
+
+Tables and bullet lists have little own text and lose in semantic score against dense paragraphs. To fix this, every chunk produced by `_merge_segments` is prefixed with the last section title seen before the chunk:
+
+```
+[SEÇÃO: CLÁUSULA 5 – COBERTURAS]
+| Cobertura | Limite |
+| Incêndio  | 100%   |
+```
+
+Detection (`_is_section_title`): a segment is a title if its first line matches `_SECTION_TITLE_RE` (Art./Artigo N, SEÇÃO/CAPÍTULO/CLÁUSULA, COBERTURA/EXCLUSÃO/FRANQUIA, roman numerals II–VIIX, `N.N. Capital-letter`) **or** is a short all-caps line (≤ 80 chars, ≥ 2 words) such as `DISPOSIÇÕES GERAIS` or `AUTO RESERVA`.
+
+No-duplicate rule: `_apply_section_prefix` skips the prefix when the chunk's first line already starts with the title — prevents the chunk that *is* the title from getting `[SEÇÃO: itself]`.
+
+`_merge_segments` tracks two variables: `last_section` (updated on every title segment seen) and `chunk_section` (captured at the moment a new accumulated chunk begins). The prefix uses `chunk_section`, not `last_section`, so a chunk that starts before a title is not mislabelled with the title that came after.
+
+**After any change to the chunker, run `python reindex.py` to regenerate all embeddings.** The dedup hash is file-content-based — unchanged PDFs would be skipped by `ingest.py`, but `reindex.py` wipes the index first, forcing a full re-embed.
+
+### reindex.py — re-indexação completa
+
+```bash
+python reindex.py [--pdf-dir ./pdfs] [--yes]
+```
+
+Wipe-and-rebuild flow (no interactivity beyond confirmation):
+
+```
+1. Lista PDFs em --pdf-dir
+2. Auto-detect seguradora/ramo/ano pelo nome do arquivo (mesma lógica do ingest.py)
+3. Exibe tabela de prévia + avisos para metadados não detectados
+4. Pede confirmação "s/N" (ou prossegue com --yes)
+5. Apaga faiss_db/faiss_index.bin e faiss_db/metadata.db (chunks + documents)
+6. Importa get_ingest_use_case() — lru_cache instancia repositórios do zero
+7. Indexa cada PDF; relatório final lista sucessos e falhas
+```
+
+Fallbacks para metadados não detectáveis: seguradora → `"Desconhecida"`, ramo → `Ramo.DESCONHECIDO`, ano → `0`, tipo → `"Geral"`. Todos avisados na prévia.
+
 ### ingest.py — CLI de alta produtividade
 
 Fluxo em 4 fases (nenhum arquivo é tocado até a confirmação do usuário):
@@ -291,8 +338,8 @@ Configuração do modelo: `temperature=0.3`, `max_tokens=4000`, `timeout=30s`, `
   - `{"event": "query_no_context", "top_k": N, "filter": ..., "document_type": ...}`
   - `"Erro no streaming LLM: ..."` / `"Erro no SSE stream: ..."` — with full traceback (`exc_info=True`)
 - `LOG_LEVEL=DEBUG` exposes recall logs from the use case:
-  - `"Retrieval: top_k=N solicitado, M chunks retornados pelo FAISS."`
-  - `"Reranking: M → K chunks após reranking."`
+  - `"Retrieval: M chunks retornados pelo FAISS."` (M = top_k × 4)
+  - `"Reranking: M avaliados, top K retidos para o LLM."`
 - `LOG_LEVEL` env var controls verbosity (default `INFO`)
 
 ### UI filters (static/index.html + static/app.js)
