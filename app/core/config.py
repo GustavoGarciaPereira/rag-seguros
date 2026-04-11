@@ -1,5 +1,8 @@
-from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import FrozenSet, List
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from app.domain.entities.insurance import DocumentType, Seguradora
 
 
 class Settings(BaseSettings):
@@ -20,11 +23,6 @@ settings = Settings()
 MAX_FILE_SIZE: int = 50 * 1024 * 1024  # 50 MB
 TEMP_DIR: str = "temp_uploads"
 
-ALLOWED_DOCUMENT_TYPES: FrozenSet[str] = frozenset(
-    {"apolice", "sinistro", "cobertura", "franquia", "endosso"}
-)
-
-ALLOWED_SEGURADORAS: List[str] = [
-    "Bradesco", "Porto Seguro", "Azul", "Allianz",
-    "Tokio Marine", "Liberty", "Mapfre",
-]
+# Derivados dos enums de domínio — fonte única de verdade
+ALLOWED_SEGURADORAS: List[str] = Seguradora.allowed_for_admin()
+ALLOWED_DOCUMENT_TYPES: FrozenSet[str] = frozenset(t.value for t in DocumentType)

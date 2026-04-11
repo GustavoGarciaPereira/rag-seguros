@@ -3,10 +3,11 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import HTMLResponse
 
-from app.core.dependencies import get_vector_service, get_llm_service
+from app.core.dependencies import get_document_catalog, get_llm_service, get_vector_service
 from app.core.metrics import metrics
-from app.services.vector_service import FAISSStore
-from app.services.llm_service import LLMService
+from app.infrastructure.gateways.deepseek_gateway import DeepSeekGateway
+from app.infrastructure.repositories.faiss_repository import FAISSVectorRepository
+from app.infrastructure.repositories.sqlite_catalog import SQLiteDocumentCatalog
 
 router = APIRouter()
 logger = logging.getLogger("rag")
@@ -14,53 +15,53 @@ logger = logging.getLogger("rag")
 
 @router.get("/", response_class=HTMLResponse)
 async def read_root():
-    """Serve a página principal"""
     with open("static/index.html", "r", encoding="utf-8") as f:
         return HTMLResponse(content=f.read(), status_code=200)
 
 
 @router.get("/health")
-async def health_check(vs: FAISSStore = Depends(get_vector_service)):
-    """Endpoint de verificação de saúde"""
+async def health_check(vs: FAISSVectorRepository = Depends(get_vector_service)):
     return {
         "status": "healthy",
         "service": "Insurance RAG Assistant",
-        "vector_store": vs.get_collection_stats()
+        "vector_store": vs.get_collection_stats(),
     }
 
 
 @router.get("/status")
-async def get_status(vs: FAISSStore = Depends(get_vector_service)):
-    """Verifica se existem documentos prontos no banco"""
-    count = vs.get_count()
+async def get_status(vs: FAISSVectorRepository = Depends(get_vector_service)):
+    count = vs.count()
     return {"total_chunks": count, "ready": count > 0}
 
 
 @router.get("/stats")
 async def get_stats(
-    vs: FAISSStore = Depends(get_vector_service),
-    llm: LLMService = Depends(get_llm_service),
+    vs: FAISSVectorRepository = Depends(get_vector_service),
+    llm: DeepSeekGateway = Depends(get_llm_service),
+    catalog: SQLiteDocumentCatalog = Depends(get_document_catalog),
 ):
-    """Retorna estatísticas do sistema"""
     try:
         vs_stats = vs.get_collection_stats()
         success, llm_status = llm.test_connection()
         return {
             "vector_store": vs_stats,
+            "inventory": {
+                "total_documents": len(catalog.list_all()),
+                "total_chunks": catalog.total_chunks(),
+            },
             "llm_service": {
                 "status": "connected" if success else "disconnected",
-                "message": llm_status
+                "message": llm_status,
             },
             "temp_directory": "temp_uploads",
-            "service": "Bradesco Insurance RAG Assistant"
+            "service": "Insurance RAG Assistant",
         }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erro ao obter estatísticas: {str(e)}")
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Erro ao obter estatísticas: {exc}")
 
 
 @router.get("/metrics")
-async def get_metrics(vs: FAISSStore = Depends(get_vector_service)):
-    """Métricas operacionais: volume de queries (24h) e latências médias por etapa."""
+async def get_metrics(vs: FAISSVectorRepository = Depends(get_vector_service)):
     return {
         "vector_store": vs.get_collection_stats(),
         "queries": metrics.stats(),

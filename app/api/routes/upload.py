@@ -1,15 +1,54 @@
 import logging
+import os
+import uuid
 from typing import Optional
 
-from fastapi import APIRouter, File, UploadFile, Form, Header, HTTPException, Depends
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 
-from app.core.config import settings, ALLOWED_SEGURADORAS
-from app.core.dependencies import get_document_service
-from app.services.document_service import DocumentService
+from app.core.config import MAX_FILE_SIZE, TEMP_DIR, settings
+from app.core.dependencies import get_ingest_use_case
+from app.domain.entities.document import InsuranceMetadata
+from app.domain.entities.insurance import Ramo, Seguradora
+from app.use_cases.ingest_document import IngestDocument
 
 router = APIRouter()
 logger = logging.getLogger("rag")
+
+_ALLOWED_ADMIN_SEGURADORAS = {s.value for s in Seguradora if s is not Seguradora.DESCONHECIDA}
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _run_ingest(
+    ingest: IngestDocument,
+    contents: bytes,
+    original_filename: str,
+    metadata: InsuranceMetadata,
+) -> int:
+    """Salva temp, indexa e limpa.  Retorna chunks resultantes."""
+    if len(contents) > MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Arquivo muito grande. Limite máximo: {MAX_FILE_SIZE // 1024 // 1024}MB",
+        )
+    os.makedirs(TEMP_DIR, exist_ok=True)
+    temp_path = os.path.join(TEMP_DIR, f"{uuid.uuid4().hex}.pdf")
+    try:
+        with open(temp_path, "wb") as f:
+            f.write(contents)
+        return ingest.execute(temp_path, metadata, source_name=original_filename)
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
+
+# ---------------------------------------------------------------------------
+# Rotas
+# ---------------------------------------------------------------------------
 
 
 @router.post("/upload")
@@ -18,37 +57,42 @@ async def upload_pdf(
     seguradora: Optional[str] = Form(None),
     ano: Optional[int] = Form(None),
     tipo: Optional[str] = Form(None),
-    doc_service: DocumentService = Depends(get_document_service),
+    ramo: Optional[str] = Form(None),
+    ingest: IngestDocument = Depends(get_ingest_use_case),
 ):
-    """Endpoint para upload de PDFs com metadados"""
+    """Upload aberto de PDFs com metadados opcionais."""
     if not settings.upload_enabled:
         raise HTTPException(status_code=403, detail="Upload desabilitado neste ambiente")
 
-    if not file.filename.lower().endswith('.pdf'):
+    if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Apenas arquivos PDF são aceitos")
 
-    metadata = {}
-    if seguradora:
-        metadata["seguradora"] = seguradora
-    if ano:
-        metadata["ano"] = ano
-    if tipo:
-        metadata["tipo"] = tipo
+    metadata = InsuranceMetadata(
+        seguradora=seguradora or "Desconhecida",
+        ano=ano or 0,
+        tipo=tipo or "Geral",
+        ramo=ramo or "Desconhecido",
+    )
 
     try:
         contents = await file.read()
-        chunks_added = doc_service.process_upload(contents, metadata)
-        return JSONResponse({
-            "success": True,
-            "message": f"Documento '{file.filename}' processado com sucesso!",
-            "chunks_added": chunks_added,
-            "filename": file.filename,
-            "metadata": metadata
-        })
+        chunks = _run_ingest(ingest, contents, file.filename, metadata)
+        return JSONResponse(
+            {
+                "success": True,
+                "message": f"Documento '{file.filename}' processado com sucesso!",
+                "chunks_added": chunks,
+                "filename": file.filename,
+                "metadata": metadata.model_dump(),
+            }
+        )
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erro ao processar PDF: {str(e)}")
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Erro ao processar PDF: {exc}")
+
+
+_ALLOWED_RAMOS = {r.value for r in Ramo if r is not Ramo.DESCONHECIDO}
 
 
 @router.post("/admin/upload")
@@ -57,41 +101,48 @@ async def admin_upload_pdf(
     seguradora: str = Form(...),
     ano: int = Form(...),
     tipo: Optional[str] = Form("Geral"),
+    ramo: Optional[str] = Form(None),
     x_admin_key: str = Header(...),
-    doc_service: DocumentService = Depends(get_document_service),
+    ingest: IngestDocument = Depends(get_ingest_use_case),
 ):
-    """
-    Endpoint administrativo para upload de documentos com curadoria.
-    Requer o header X-Admin-Key com o valor de ADMIN_API_KEY do .env
-    """
+    """Upload administrativo — valida seguradora via enum e requer X-Admin-Key."""
     if not settings.upload_enabled:
         raise HTTPException(status_code=403, detail="Upload desabilitado neste ambiente")
 
     if not settings.admin_api_key or x_admin_key != settings.admin_api_key:
         raise HTTPException(status_code=401, detail="Chave de administrador inválida ou ausente")
 
-    if not file.filename.lower().endswith('.pdf'):
+    if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Apenas arquivos PDF são aceitos")
 
-    if seguradora not in ALLOWED_SEGURADORAS:
+    if seguradora not in _ALLOWED_ADMIN_SEGURADORAS:
         raise HTTPException(
             status_code=400,
-            detail=f"Seguradora não permitida. Escolha entre: {', '.join(ALLOWED_SEGURADORAS)}"
+            detail=f"Seguradora não permitida. Escolha entre: {', '.join(sorted(_ALLOWED_ADMIN_SEGURADORAS))}",
         )
 
-    metadata = {"seguradora": seguradora, "ano": ano, "tipo": tipo}
+    ramo_value = ramo or "Desconhecido"
+    if ramo and ramo not in _ALLOWED_RAMOS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Ramo não permitido. Escolha entre: {', '.join(sorted(_ALLOWED_RAMOS))}",
+        )
+
+    metadata = InsuranceMetadata(seguradora=seguradora, ano=ano, tipo=tipo or "Geral", ramo=ramo_value)
 
     try:
         contents = await file.read()
-        chunks_added = doc_service.process_upload(contents, metadata)
-        return JSONResponse({
-            "success": True,
-            "message": f"Documento da {seguradora} processado com sucesso!",
-            "chunks_added": chunks_added,
-            "filename": file.filename,
-            "metadata": metadata
-        })
+        chunks = _run_ingest(ingest, contents, file.filename, metadata)
+        return JSONResponse(
+            {
+                "success": True,
+                "message": f"Documento da {seguradora} processado com sucesso!",
+                "chunks_added": chunks,
+                "filename": file.filename,
+                "metadata": metadata.model_dump(),
+            }
+        )
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erro ao processar PDF administrativo: {str(e)}")
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Erro ao processar PDF administrativo: {exc}")
