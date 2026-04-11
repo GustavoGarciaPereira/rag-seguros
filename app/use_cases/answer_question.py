@@ -33,7 +33,7 @@ class AskInsuranceQuestion:
     def execute(
         self,
         question: str,
-        top_k: int = 10,
+        top_k: int = 15,
         filter_dict: Optional[Dict[str, Any]] = None,
         seguradora: Optional[str] = None,
         document_type: Optional[str] = None,
@@ -55,11 +55,24 @@ class AskInsuranceQuestion:
         raw_results = self._vector_repo.search(
             question, n_results=top_k, filter_dict=filter_dict
         )
+
+        logger.debug(
+            "Retrieval: top_k=%d solicitado, %d chunks retornados pelo FAISS.",
+            top_k,
+            len(raw_results),
+        )
+
         if not raw_results:
             return None, []
 
         # Etapa 2: reranking por sobreposição de termos
         reranked = self._reranker.rerank(question, raw_results)
+
+        logger.debug(
+            "Reranking: %d → %d chunks após reranking.",
+            len(raw_results),
+            len(reranked),
+        )
 
         # Etapa 3: geração LLM
         answer = self._llm.generate(

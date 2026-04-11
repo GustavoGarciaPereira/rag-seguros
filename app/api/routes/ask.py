@@ -22,7 +22,7 @@ async def ask_question(
 ):
     """Pergunta sobre os documentos indexados com suporte a filtro.
 
-    Body: ``{"question": "...", "top_k": 10, "filter": {"seguradora": "Bradesco"}}``
+    Body: ``{"question": "...", "top_k": 15, "filter": {"seguradora": "Bradesco"}}``
     """
     if data.document_type is not None and data.document_type not in ALLOWED_DOCUMENT_TYPES:
         raise HTTPException(
@@ -45,7 +45,16 @@ async def ask_question(
         total_elapsed = (_time.perf_counter() - t1) * 1000
 
         if answer is None:
-            logger.info(_json.dumps({"event": "query_no_context", "filter": data.filter}))
+            logger.info(
+                _json.dumps(
+                    {
+                        "event": "query_no_context",
+                        "top_k": data.top_k,
+                        "filter": data.filter,
+                        "document_type": data.document_type,
+                    }
+                )
+            )
             return JSONResponse(
                 {
                     "success": True,
@@ -66,7 +75,8 @@ async def ask_question(
                 {
                     "event": "query",
                     "total_ms": round(total_elapsed, 1),
-                    "chunks": len(context),
+                    "top_k": data.top_k,
+                    "chunks_returned": len(context),
                     "filter": data.filter,
                     "document_type": data.document_type,
                 }

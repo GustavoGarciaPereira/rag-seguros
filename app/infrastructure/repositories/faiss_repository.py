@@ -98,7 +98,7 @@ class FAISSVectorRepository(VectorRepository):
     def search(
         self,
         query: str,
-        n_results: int = 10,
+        n_results: int = 15,
         filter_dict: Optional[Dict[str, Any]] = None,
     ) -> List[SearchResult]:
         if self.index.ntotal == 0:

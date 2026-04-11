@@ -172,9 +172,9 @@ def get_inventory_use_case() -> GetInventory:
 ### /ask request body
 
 ```json
-{ "question": "...", "top_k": 10, "filter": {"seguradora": "Bradesco"} }
+{ "question": "...", "top_k": 15, "filter": {"seguradora": "Bradesco"} }
 ```
-`top_k` clamped 1–20. `filter` optional.
+`top_k` default 15, clamped 1–20. `filter` optional.
 
 ### Deduplication flow (IngestDocument)
 
