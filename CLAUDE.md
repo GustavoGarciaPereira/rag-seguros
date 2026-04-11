@@ -38,8 +38,8 @@ RAG (Retrieval-Augmented Generation) API for insurance document analysis built o
 2. **Chunking** → `InsuranceSemanticChunker` splits at clause/paragraph/article boundaries (1200-char target, 200-char overlap); cross-page overlap is handled inside `IngestDocument`
 3. **Deduplication** → `IngestDocument` computes SHA-256 of the file; if hash exists in the `DocumentCatalog`, skips re-embedding or only updates metadata in-place
 4. **Vectorization** → `FAISSVectorRepository` encodes chunks with `sentence-transformers` (`all-MiniLM-L6-v2`, 384-dim) and persists to FAISS + SQLite
-5. **Query** → `AskInsuranceQuestion`: FAISS top-K → `KeywordOverlapReranker` (70% semantic + 30% PT term overlap) → `DeepSeekGateway`
-6. **Generation** → DeepSeek `deepseek-chat`, structured 4-section audit response (timeout 30s, 3 retries with exponential backoff)
+5. **Query** → `AskInsuranceQuestion`: FAISS top-K (default 15) → `KeywordOverlapReranker` (70% semantic + 30% PT term overlap) → `DeepSeekGateway`
+6. **Generation** → DeepSeek `deepseek-chat`, 4-section audit response with Chain-of-Thought (Análise Prévia Silenciosa), cross-reference resolution and formula transcription; max_tokens 4000, timeout 30s, 3 retries with exponential backoff
 
 ### Layer responsibilities
 
@@ -130,13 +130,13 @@ def get_inventory_use_case() -> GetInventory:
 - [app/domain/interfaces/vector_repository.py](app/domain/interfaces/vector_repository.py) — `VectorRepository` ABC: `add`, `search`, `delete`, `update_metadata` (in-place without re-embedding), `has_document`, `count`.
 - [app/domain/interfaces/document_catalog.py](app/domain/interfaces/document_catalog.py) — `DocumentCatalog` ABC: `register`, `find_by_hash`, `update_metadata(doc_id, seguradora, ano, tipo, ramo)`, `remove`, `list_all`, `total_chunks`.
 - [app/use_cases/ingest_document.py](app/use_cases/ingest_document.py) — `IngestDocument.execute(file_path, metadata, source_name)`. SHA-256 dedup: skip if identical hash+metadata (including `ramo`) / update metadata in-place if content unchanged / full re-index if new. Owns cross-page overlap logic.
-- [app/use_cases/answer_question.py](app/use_cases/answer_question.py) — `AskInsuranceQuestion.execute(question, top_k, filter_dict, ...)` → `(answer, reranked_results)`.
+- [app/use_cases/answer_question.py](app/use_cases/answer_question.py) — `AskInsuranceQuestion.execute(question, top_k=15, filter_dict, ...)` → `(answer, reranked_results)`. Emits `DEBUG` logs: "Retrieval: top_k=N solicitado, M chunks retornados" and "Reranking: M → K chunks" for recall debugging.
 - [app/use_cases/get_inventory.py](app/use_cases/get_inventory.py) — `GetInventory.execute()` → `{total_documents, total_chunks, by_seguradora, documents}`.
-- [app/infrastructure/repositories/faiss_repository.py](app/infrastructure/repositories/faiss_repository.py) — `FAISSVectorRepository`: pure vector ops. Composes `SQLiteMetadataStore`. Auto-migrates legacy `metadata.pkl` to SQLite on first load.
-- [app/infrastructure/repositories/sqlite_metadata.py](app/infrastructure/repositories/sqlite_metadata.py) — `SQLiteMetadataStore`: `chunks` table. Manages `faiss_pos` renumbering after deletions. `update_document_metadata` patches seguradora/ano/tipo/ramo without touching embeddings.
-- [app/infrastructure/repositories/sqlite_catalog.py](app/infrastructure/repositories/sqlite_catalog.py) — `SQLiteDocumentCatalog`: `documents` table in the same `metadata.db`. Stores one row per PDF with `file_hash` (SHA-256 UNIQUE), `chunk_count`, `created_at`, `ramo`.
+- [app/infrastructure/repositories/faiss_repository.py](app/infrastructure/repositories/faiss_repository.py) — `FAISSVectorRepository`: pure vector ops. Composes `SQLiteMetadataStore`. `add` maps `c.metadata.ramo` into the entries dict (bug fix: previously omitted, causing chunks to always store "Desconhecido"). `search` returns `ramo` in `SearchResult`.
+- [app/infrastructure/repositories/sqlite_metadata.py](app/infrastructure/repositories/sqlite_metadata.py) — `SQLiteMetadataStore`: `chunks` table with `COLLATE NOCASE` on `seguradora` and `ramo`. Manages `faiss_pos` renumbering after deletions. `update_document_metadata` patches seguradora/ano/tipo/ramo without touching embeddings.
+- [app/infrastructure/repositories/sqlite_catalog.py](app/infrastructure/repositories/sqlite_catalog.py) — `SQLiteDocumentCatalog`: `documents` table with `COLLATE NOCASE` on `seguradora` and `ramo`. Stores one row per PDF with `file_hash` (SHA-256 UNIQUE), `chunk_count`, `created_at`, `ramo`.
 - [app/infrastructure/chunkers/semantic_chunker.py](app/infrastructure/chunkers/semantic_chunker.py) — `InsuranceSemanticChunker`. `_fixed_chunk` is marked as **Rust/PyO3 optimization target**.
-- [app/infrastructure/gateways/deepseek_gateway.py](app/infrastructure/gateways/deepseek_gateway.py) — `DeepSeekGateway`: wraps `openai` SDK, owns the auditor system prompt, formats `List[SearchResult]` into the LLM context string.
+- [app/infrastructure/gateways/deepseek_gateway.py](app/infrastructure/gateways/deepseek_gateway.py) — `DeepSeekGateway`: wraps `openai` SDK, owns the auditor system prompt (Chain-of-Thought, cross-reference resolution, formula transcription, ramo prioritisation). `_format_context` exposes `[Trecho N | Fonte | Ramo | Pág.]` headers so the model can filter by ramo. `max_tokens=4000`.
 - [app/core/dependencies.py](app/core/dependencies.py) — single wiring point. Exposes `get_ask_use_case`, `get_ingest_use_case`, `get_inventory_use_case`, `get_vector_service`, `get_llm_service`, `get_document_catalog`.
 - [ingest.py](ingest.py) — CLI bulk-ingestion de alta produtividade. Fluxo em 4 fases: coleta de metadados com auto-detect + session memory → resumo do lote com prévia de renomeação → renomeação física → indexação. Usa `get_ingest_use_case()` — caminho idêntico à API.
 
@@ -243,9 +243,36 @@ Fase 4 — Indexação (get_ingest_use_case importado apenas aqui)
 
 Exemplo de nome gerado: `Bradesco_Agricola_Cobertura_2025_559ae.pdf`
 
+### DeepSeek system prompt — estrutura e comportamento
+
+O prompt vive em `_SYSTEM_PROMPT` dentro de [app/infrastructure/gateways/deepseek_gateway.py](app/infrastructure/gateways/deepseek_gateway.py). Principais blocos:
+
+| Bloco | Propósito |
+|---|---|
+| **ESCOPO DE ATUAÇÃO** | Restringe o modelo a responder apenas sobre seguros |
+| **ANÁLISE PRÉVIA SILENCIOSA** | Chain-of-Thought interno: mapeia cláusulas, referências cruzadas sumário↔conteúdo, fórmulas e ramo dominante antes de redigir |
+| **FÓRMULAS E CÁLCULOS** | Obriga transcrição literal de fórmulas em Markdown; proíbe paráfrase |
+| **PROIBIÇÃO DE DESCULPAS** | Impede "não encontrei" enquanto houver número de cláusula ou referência de página nos trechos |
+| **FORMATO OBRIGATÓRIO** | 4 seções: Veredito Direto / Detalhes Técnicos / Letra Miúda / Prova Documental |
+
+Parâmetros injetados dinamicamente no prompt: `{context}` (trechos formatados) e `{n_chunks}` (contagem real de trechos, usada nas instruções de exaustão).
+
+Formato de cada trecho no contexto:
+```
+[Trecho N | Fonte: Bradesco | Ramo: Agricola | Pág. 47]:
+<texto do chunk>
+```
+
+Configuração do modelo: `temperature=0.3`, `max_tokens=4000`, `timeout=30s`, `max_retries=3` (backoff exponencial 1s/2s).
+
 ### Observability
 
 - `GET /metrics` — `{"queries_24h": N, "avg_retrieval_ms": X, "avg_llm_ms": Y, "avg_total_ms": Z}`
 - `GET /stats` — includes `"inventory": {"total_documents": N, "total_chunks": N}`
-- Structured JSON logs to stdout; each query emits `{"event": "query", "total_ms": ..., "chunks": ..., ...}`
+- Structured JSON logs to stdout:
+  - `{"event": "query", "total_ms": ..., "top_k": N, "chunks_returned": K, "filter": ..., "document_type": ...}`
+  - `{"event": "query_no_context", "top_k": N, "filter": ..., "document_type": ...}`
+- `LOG_LEVEL=DEBUG` exposes recall logs from the use case:
+  - `"Retrieval: top_k=N solicitado, M chunks retornados pelo FAISS."`
+  - `"Reranking: M → K chunks após reranking."`
 - `LOG_LEVEL` env var controls verbosity (default `INFO`)
