@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 from app.core.config import MAX_FILE_SIZE, TEMP_DIR, settings
 from app.core.dependencies import get_ingest_use_case
 from app.domain.entities.document import InsuranceMetadata
-from app.domain.entities.insurance import Seguradora
+from app.domain.entities.insurance import Ramo, Seguradora
 from app.use_cases.ingest_document import IngestDocument
 
 router = APIRouter()
@@ -57,6 +57,7 @@ async def upload_pdf(
     seguradora: Optional[str] = Form(None),
     ano: Optional[int] = Form(None),
     tipo: Optional[str] = Form(None),
+    ramo: Optional[str] = Form(None),
     ingest: IngestDocument = Depends(get_ingest_use_case),
 ):
     """Upload aberto de PDFs com metadados opcionais."""
@@ -70,6 +71,7 @@ async def upload_pdf(
         seguradora=seguradora or "Desconhecida",
         ano=ano or 0,
         tipo=tipo or "Geral",
+        ramo=ramo or "Desconhecido",
     )
 
     try:
@@ -90,12 +92,16 @@ async def upload_pdf(
         raise HTTPException(status_code=500, detail=f"Erro ao processar PDF: {exc}")
 
 
+_ALLOWED_RAMOS = {r.value for r in Ramo if r is not Ramo.DESCONHECIDO}
+
+
 @router.post("/admin/upload")
 async def admin_upload_pdf(
     file: UploadFile = File(...),
     seguradora: str = Form(...),
     ano: int = Form(...),
     tipo: Optional[str] = Form("Geral"),
+    ramo: Optional[str] = Form(None),
     x_admin_key: str = Header(...),
     ingest: IngestDocument = Depends(get_ingest_use_case),
 ):
@@ -115,7 +121,14 @@ async def admin_upload_pdf(
             detail=f"Seguradora não permitida. Escolha entre: {', '.join(sorted(_ALLOWED_ADMIN_SEGURADORAS))}",
         )
 
-    metadata = InsuranceMetadata(seguradora=seguradora, ano=ano, tipo=tipo or "Geral")
+    ramo_value = ramo or "Desconhecido"
+    if ramo and ramo not in _ALLOWED_RAMOS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Ramo não permitido. Escolha entre: {', '.join(sorted(_ALLOWED_RAMOS))}",
+        )
+
+    metadata = InsuranceMetadata(seguradora=seguradora, ano=ano, tipo=tipo or "Geral", ramo=ramo_value)
 
     try:
         contents = await file.read()

@@ -40,6 +40,7 @@ class SQLiteMetadataStore:
                     seguradora TEXT    NOT NULL DEFAULT 'Desconhecida',
                     ano        INTEGER NOT NULL DEFAULT 0,
                     tipo       TEXT    NOT NULL DEFAULT 'Geral',
+                    ramo       TEXT    NOT NULL DEFAULT 'Desconhecido',
                     chunk_index INTEGER NOT NULL DEFAULT 0
                 )
             """)
@@ -79,14 +80,15 @@ class SQLiteMetadataStore:
                     meta.get("seguradora", "Desconhecida"),
                     meta.get("ano", 0),
                     meta.get("tipo", "Geral"),
+                    meta.get("ramo", "Desconhecido"),
                     meta.get("chunk_index", 0),
                 )
                 for i, (text, meta) in enumerate(entries)
             ]
             conn.executemany(
                 "INSERT INTO chunks "
-                "(faiss_pos, doc_id, text, source, page, seguradora, ano, tipo, chunk_index) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "(faiss_pos, doc_id, text, source, page, seguradora, ano, tipo, ramo, chunk_index) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 rows,
             )
 
@@ -121,7 +123,7 @@ class SQLiteMetadataStore:
     # ------------------------------------------------------------------
 
     def update_document_metadata(
-        self, doc_id: str, seguradora: str, ano: int, tipo: str
+        self, doc_id: str, seguradora: str, ano: int, tipo: str, ramo: str
     ) -> bool:
         """Atualiza metadados de seguro de todos os chunks de um documento.
 
@@ -132,8 +134,8 @@ class SQLiteMetadataStore:
         """
         with self._conn() as conn:
             cursor = conn.execute(
-                "UPDATE chunks SET seguradora=?, ano=?, tipo=? WHERE doc_id=?",
-                (seguradora, ano, tipo, doc_id),
+                "UPDATE chunks SET seguradora=?, ano=?, tipo=?, ramo=? WHERE doc_id=?",
+                (seguradora, ano, tipo, ramo, doc_id),
             )
         return cursor.rowcount > 0
 

@@ -36,3 +36,14 @@ class DocumentType(str, Enum):
     FRANQUIA = "franquia"
     ENDOSSO = "endosso"
     GERAL = "Geral"
+
+
+class Ramo(str, Enum):
+    """Ramo de seguro — evita confusão entre manuais de ramos distintos."""
+
+    AGRICOLA = "Agricola"
+    AUTOMOVEL = "Automovel"
+    PME = "PME"
+    CONSTRUCAO_CIVIL = "Construcao Civil"
+    RESIDENCIAL = "Residencial"
+    DESCONHECIDO = "Desconhecido"

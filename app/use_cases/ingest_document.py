@@ -85,6 +85,7 @@ class IngestDocument:
                 metadata.seguradora != existing.seguradora
                 or metadata.ano != existing.ano
                 or metadata.tipo != existing.tipo
+                or metadata.ramo != existing.ramo
             )
             if not metadata_changed:
                 logger.info(
@@ -95,7 +96,7 @@ class IngestDocument:
 
             # Mesmo conteúdo, metadados novos: atualiza sem re-embedar
             self._catalog.update_metadata(
-                existing.doc_id, metadata.seguradora, metadata.ano, metadata.tipo
+                existing.doc_id, metadata.seguradora, metadata.ano, metadata.tipo, metadata.ramo
             )
             self._vector_repo.update_metadata(existing.doc_id, metadata)
             logger.info(
@@ -177,6 +178,7 @@ class IngestDocument:
                 seguradora=metadata.seguradora,
                 ano=metadata.ano,
                 tipo=metadata.tipo,
+                ramo=metadata.ramo,
                 chunk_count=len(chunks),
                 created_at=datetime.now(timezone.utc).isoformat(),
             )

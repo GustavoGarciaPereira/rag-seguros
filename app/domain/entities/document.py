@@ -14,6 +14,7 @@ class InsuranceMetadata(BaseModel):
     seguradora: str = "Desconhecida"
     ano: int = 0
     tipo: str = "Geral"
+    ramo: str = "Desconhecido"
 
     @field_validator("tipo", mode="before")
     @classmethod
@@ -26,6 +27,11 @@ class InsuranceMetadata(BaseModel):
     @classmethod
     def _normalise_seguradora(cls, v: object) -> str:
         return str(v).strip() if v else "Desconhecida"
+
+    @field_validator("ramo", mode="before")
+    @classmethod
+    def _normalise_ramo(cls, v: object) -> str:
+        return str(v).strip() if v else "Desconhecido"
 
 
 class ParsedPage(BaseModel):
@@ -55,6 +61,7 @@ class SearchResult(BaseModel):
     seguradora: str = "Desconhecida"
     ano: int = 0
     tipo: str = "Geral"
+    ramo: str = "Desconhecido"
     relevance_score: float = 0.0
 
     def to_context_dict(self) -> dict:
@@ -75,5 +82,6 @@ class DocumentRecord(BaseModel):
     seguradora: str = "Desconhecida"
     ano: int = 0
     tipo: str = "Geral"
+    ramo: str = "Desconhecido"
     chunk_count: int = 0
     created_at: str  # ISO 8601 UTC

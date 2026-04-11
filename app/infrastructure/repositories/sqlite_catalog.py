@@ -10,6 +10,7 @@ Tabela ``documents``:
     seguradora  – nome da seguradora
     ano         – ano do documento
     tipo        – tipo do documento
+    ramo        – ramo de seguro (ex: Agricola, Automovel, PME…)
     chunk_count – quantidade de chunks indexados no FAISS
     created_at  – data/hora da primeira indexação (ISO 8601 UTC)
 """
@@ -46,6 +47,7 @@ class SQLiteDocumentCatalog(DocumentCatalog):
                     seguradora  TEXT    NOT NULL DEFAULT 'Desconhecida',
                     ano         INTEGER NOT NULL DEFAULT 0,
                     tipo        TEXT    NOT NULL DEFAULT 'Geral',
+                    ramo        TEXT    NOT NULL DEFAULT 'Desconhecido',
                     chunk_count INTEGER NOT NULL DEFAULT 0,
                     created_at  TEXT    NOT NULL
                 )
@@ -62,8 +64,8 @@ class SQLiteDocumentCatalog(DocumentCatalog):
         with self._conn() as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO documents "
-                "(doc_id, source_name, file_hash, seguradora, ano, tipo, chunk_count, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "(doc_id, source_name, file_hash, seguradora, ano, tipo, ramo, chunk_count, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     record.doc_id,
                     record.source_name,
@@ -71,6 +73,7 @@ class SQLiteDocumentCatalog(DocumentCatalog):
                     record.seguradora,
                     record.ano,
                     record.tipo,
+                    record.ramo,
                     record.chunk_count,
                     record.created_at,
                 ),
@@ -84,12 +87,12 @@ class SQLiteDocumentCatalog(DocumentCatalog):
         return DocumentRecord(**dict(row)) if row else None
 
     def update_metadata(
-        self, doc_id: str, seguradora: str, ano: int, tipo: str
+        self, doc_id: str, seguradora: str, ano: int, tipo: str, ramo: str
     ) -> None:
         with self._conn() as conn:
             conn.execute(
-                "UPDATE documents SET seguradora=?, ano=?, tipo=? WHERE doc_id=?",
-                (seguradora, ano, tipo, doc_id),
+                "UPDATE documents SET seguradora=?, ano=?, tipo=?, ramo=? WHERE doc_id=?",
+                (seguradora, ano, tipo, ramo, doc_id),
             )
 
     def remove(self, doc_id: str) -> None:

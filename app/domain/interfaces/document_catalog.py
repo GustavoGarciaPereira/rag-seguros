@@ -25,7 +25,7 @@ class DocumentCatalog(ABC):
 
     @abstractmethod
     def update_metadata(
-        self, doc_id: str, seguradora: str, ano: int, tipo: str
+        self, doc_id: str, seguradora: str, ano: int, tipo: str, ramo: str
     ) -> None:
         """Atualiza apenas os campos de metadados de seguro, sem alterar hash ou chunks."""
         ...

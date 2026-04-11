@@ -155,7 +155,7 @@ class FAISSVectorRepository(VectorRepository):
 
     def update_metadata(self, document_id: str, metadata: InsuranceMetadata) -> bool:
         return self._meta.update_document_metadata(
-            document_id, metadata.seguradora, metadata.ano, metadata.tipo
+            document_id, metadata.seguradora, metadata.ano, metadata.tipo, metadata.ramo
         )
 
     def has_document(self, document_id: str) -> bool:
