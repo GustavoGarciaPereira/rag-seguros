@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 import os
 import time
-from typing import List, Optional
+from typing import Iterator, List, Optional
 
 from openai import OpenAI
 
@@ -184,6 +184,32 @@ class DeepSeekGateway(LLMGateway):
             f"Desculpe, não foi possível obter resposta após {self._max_retries} "
             "tentativas. Tente novamente em instantes."
         )
+
+    def generate_stream(
+        self,
+        question: str,
+        context: List[SearchResult],
+        seguradora: Optional[str] = None,
+        document_type: Optional[str] = None,
+    ) -> Iterator[str]:
+        """Gera resposta em streaming, cedendo cada delta de texto recebido da API."""
+        context_text = self._format_context(context)
+        system_prompt = _SYSTEM_PROMPT.format(context=context_text, n_chunks=len(context))
+        user_message = self._build_user_message(question, seguradora, document_type)
+
+        stream = self._client.chat.completions.create(
+            model=self._model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message},
+            ],
+            max_tokens=self._max_tokens,
+            temperature=0.3,
+            stream=True,
+        )
+        for chunk in stream:
+            if chunk.choices and chunk.choices[0].delta.content:
+                yield chunk.choices[0].delta.content
 
     def test_connection(self) -> tuple[bool, str]:
         try:
