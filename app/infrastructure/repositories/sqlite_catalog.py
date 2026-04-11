@@ -44,10 +44,10 @@ class SQLiteDocumentCatalog(DocumentCatalog):
                     doc_id      TEXT    PRIMARY KEY,
                     source_name TEXT    NOT NULL,
                     file_hash   TEXT    NOT NULL UNIQUE,
-                    seguradora  TEXT    NOT NULL DEFAULT 'Desconhecida',
+                    seguradora  TEXT    NOT NULL DEFAULT 'Desconhecida' COLLATE NOCASE,
                     ano         INTEGER NOT NULL DEFAULT 0,
                     tipo        TEXT    NOT NULL DEFAULT 'Geral',
-                    ramo        TEXT    NOT NULL DEFAULT 'Desconhecido',
+                    ramo        TEXT    NOT NULL DEFAULT 'Desconhecido' COLLATE NOCASE,
                     chunk_count INTEGER NOT NULL DEFAULT 0,
                     created_at  TEXT    NOT NULL
                 )

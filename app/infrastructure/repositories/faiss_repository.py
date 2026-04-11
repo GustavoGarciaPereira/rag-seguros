@@ -84,6 +84,7 @@ class FAISSVectorRepository(VectorRepository):
                     "seguradora": c.metadata.seguradora,
                     "ano": c.metadata.ano,
                     "tipo": c.metadata.tipo,
+                    "ramo": c.metadata.ramo,
                     "chunk_index": c.chunk_index,
                 },
             )
@@ -130,6 +131,7 @@ class FAISSVectorRepository(VectorRepository):
                     seguradora=meta.get("seguradora", "Desconhecida"),
                     ano=meta.get("ano", 0),
                     tipo=meta.get("tipo", "Geral"),
+                    ramo=meta.get("ramo", "Desconhecido"),
                     relevance_score=float(1 / (1 + distance)),
                 )
             )

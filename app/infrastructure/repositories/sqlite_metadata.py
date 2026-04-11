@@ -32,15 +32,15 @@ class SQLiteMetadataStore:
         with self._conn() as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS chunks (
-                    faiss_pos  INTEGER NOT NULL,
-                    doc_id     TEXT    NOT NULL,
-                    text       TEXT    NOT NULL,
-                    source     TEXT    NOT NULL DEFAULT '',
-                    page       INTEGER NOT NULL DEFAULT 0,
-                    seguradora TEXT    NOT NULL DEFAULT 'Desconhecida',
-                    ano        INTEGER NOT NULL DEFAULT 0,
-                    tipo       TEXT    NOT NULL DEFAULT 'Geral',
-                    ramo       TEXT    NOT NULL DEFAULT 'Desconhecido',
+                    faiss_pos   INTEGER NOT NULL,
+                    doc_id      TEXT    NOT NULL,
+                    text        TEXT    NOT NULL,
+                    source      TEXT    NOT NULL DEFAULT '',
+                    page        INTEGER NOT NULL DEFAULT 0,
+                    seguradora  TEXT    NOT NULL DEFAULT 'Desconhecida' COLLATE NOCASE,
+                    ano         INTEGER NOT NULL DEFAULT 0,
+                    tipo        TEXT    NOT NULL DEFAULT 'Geral',
+                    ramo        TEXT    NOT NULL DEFAULT 'Desconhecido' COLLATE NOCASE,
                     chunk_index INTEGER NOT NULL DEFAULT 0
                 )
             """)
