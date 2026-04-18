@@ -32,6 +32,13 @@ TEST_QUERIES = [
         "required_sections": ["o que cobre", "limites", "não cobre"],
         "min_chars": 200,
     },
+    {
+        "question": "Como é calculada a indenização por perda total no seguro de automóvel?",
+        "filter": {},
+        "required_sections": [],
+        "min_chars": 300,
+        "required_terms": ["Bradesco", "Allianz"],
+    },
 ]
 
 # ---------------------------------------------------------------------------
@@ -70,12 +77,26 @@ def _run_test(query_config: Dict[str, Any]) -> bool:
 
     # 1. Seções obrigatórias
     sections = _check_sections(answer, query_config["required_sections"])
-    print("\n  Seções obrigatórias:")
-    for section, found in sections.items():
-        mark = "✅" if found else "❌"
-        print(f"    {mark} {section}")
-        if not found:
-            passed = False
+    if sections:
+        print("\n  Seções obrigatórias:")
+        for section, found in sections.items():
+            mark = "✅" if found else "❌"
+            print(f"    {mark} {section}")
+            if not found:
+                passed = False
+    else:
+        print("\n  📋 Seções obrigatórias: (nenhuma especificada)")
+
+    # 1b. Termos obrigatórios
+    required_terms = query_config.get("required_terms", [])
+    if required_terms:
+        print("\n  🔍 Termos obrigatórios:")
+        for term in required_terms:
+            found = term.lower() in answer.lower()
+            mark = "✅" if found else "❌"
+            print(f"    {mark} {term}")
+            if not found:
+                passed = False
 
     # 2. Tamanho mínimo
     min_chars = query_config.get("min_chars", 0)
