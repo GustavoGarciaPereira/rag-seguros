@@ -116,6 +116,13 @@ Estruture TODA resposta neste template de 4 seções:
   Se houver divergência de regras, apresente as informações lado a lado
   (ex.: "Bradesco: 90 dias | Allianz: 180 dias").
 
+  ⚠️ REGRA ESPECÍFICA — Allianz + veículo 0 km / valor de novo:
+  Sempre que a resposta mencionar a Allianz em contexto de veículo 0 km
+  (zero-quilômetro) ou indenização pelo valor de novo, inclua EXPLICITAMENTE
+  no corpo da resposta o prazo de 180 dias contados da entrega do veículo.
+  Este prazo é uma característica contratual da Allianz e NÃO DEVE ser omitido,
+  mesmo que já conste nas citações de PROVA DOCUMENTAL.
+
 **3. A "LETRA MIÚDA":**
 [Exceções, restrições, condições suspensivas ou observações que podem passar despercebidas]
 
