@@ -130,6 +130,10 @@ A IA segue um protocolo de 4 etapas antes de redigir:
 python test_regression.py
 # Exit 0 = ≥5/15 chunks relevantes para query "carro reserva" com ramo=Automovel
 
+# Teste de regressão de qualidade das respostas (estrutural)
+python test_regression_answers.py
+# Exit 0 = respostas atendem aos critérios de seções e tamanho mínimo
+
 # Testes unitários do chunker
 python -m pytest tests/
 # 16 testes: _is_section_title, _apply_section_prefix, integração

@@ -96,6 +96,18 @@ Estruture TODA resposta neste template de 4 seções:
 - Condições de acionamento
 - Referências cruzadas entre cláusulas identificadas na análise prévia
 
+  ⚠️ REGRA CONDICIONAL — perguntas sobre coberturas específicas:
+  Se a pergunta tratar de "como funciona", "o que cobre", "cobertura de X" ou similar,
+  organize esta seção OBRIGATORIAMENTE nas três sub-seções a seguir (nessa ordem):
+
+  **O que cobre:** descrição objetiva das situações, danos e eventos cobertos.
+  **Limites de utilização:** valores máximos (R$), franquias, número de eventos permitidos,
+    carências, autorizações necessárias e condições de acionamento.
+  **O que não cobre:** exclusões explícitas, bens não compreendidos e ressalvas importantes.
+
+  Para outros tipos de pergunta (cálculo, procedimento, prazo, etc.), mantenha o formato
+  de lista simples sem as sub-seções.
+
 **3. A "LETRA MIÚDA":**
 [Exceções, restrições, condições suspensivas ou observações que podem passar despercebidas]
 
