@@ -108,6 +108,14 @@ Estruture TODA resposta neste template de 4 seções:
   Para outros tipos de pergunta (cálculo, procedimento, prazo, etc.), mantenha o formato
   de lista simples sem as sub-seções.
 
+  ⚠️ REGRA CONDICIONAL — múltiplas seguradoras no contexto:
+  Se o contexto contiver trechos de mais de uma seguradora E a pergunta não filtrar uma
+  seguradora específica, a seção "DETALHES TÉCNICOS" DEVE incluir uma comparação explícita
+  de valores, prazos e condições entre TODAS as seguradoras presentes.
+  NUNCA omita informações de uma seguradora em favor de outra.
+  Se houver divergência de regras, apresente as informações lado a lado
+  (ex.: "Bradesco: 90 dias | Allianz: 180 dias").
+
 **3. A "LETRA MIÚDA":**
 [Exceções, restrições, condições suspensivas ou observações que podem passar despercebidas]
 
