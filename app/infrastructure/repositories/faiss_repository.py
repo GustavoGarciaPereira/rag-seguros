@@ -118,10 +118,22 @@ class FAISSVectorRepository(VectorRepository):
             if meta is None:
                 continue
 
-            if filter_dict and any(
-                meta.get(k) != v for k, v in filter_dict.items()
-            ):
-                continue
+            if filter_dict:
+                # Comparação case-insensitive para espelhar COLLATE NOCASE do SQLite
+                mismatched = any(
+                    str(meta.get(k, "")).lower() != str(v).lower()
+                    for k, v in filter_dict.items()
+                )
+                logger.debug(
+                    "faiss_pos=%d ramo=%r seguradora=%r filter=%r → %s",
+                    idx,
+                    meta.get("ramo"),
+                    meta.get("seguradora"),
+                    filter_dict,
+                    "SKIP" if mismatched else "OK",
+                )
+                if mismatched:
+                    continue
 
             results.append(
                 SearchResult(

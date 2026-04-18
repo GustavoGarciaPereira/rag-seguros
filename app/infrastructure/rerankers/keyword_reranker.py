@@ -22,6 +22,18 @@ _STOPWORDS_PT: frozenset = frozenset({
 
 _PUNCT = re.compile(r"[^\w\s]")
 
+# Termos de domínio: quando a query contém a chave, os valores são adicionados
+# ao conjunto de termos para fins de overlap (captura sinônimos e métricas).
+_DOMAIN_EXPANSIONS: dict[str, list[str]] = {
+    "perda":        ["indenização", "vmr", "fipe", "0km", "180", "365"],
+    "indenização":  ["perda", "vmr", "fipe", "0km", "180", "365"],
+    "total":        ["0km", "zero quilômetro", "180", "365", "vmr"],
+    "carro":        ["veículo", "automóvel", "reserva", "locação"],
+    "reserva":      ["carro", "locação", "diárias", "básico", "plus", "premium"],
+    "franquia":     ["dedutível", "participação", "obrigatória"],
+    "cobertura":    ["cláusula", "assistência", "incluído", "compreendido"],
+}
+
 
 class KeywordOverlapReranker(Reranker):
     """Reranker de sobreposição de termos com pesos configuráveis."""
@@ -38,6 +50,12 @@ class KeywordOverlapReranker(Reranker):
 
     def rerank(self, query: str, results: List[SearchResult]) -> List[SearchResult]:
         query_terms = set(_PUNCT.sub("", query.lower()).split()) - _STOPWORDS_PT
+        # Expansão de domínio: adiciona termos relacionados ao conjunto da query
+        extra: set[str] = set()
+        for term in query_terms:
+            for expansion in _DOMAIN_EXPANSIONS.get(term, []):
+                extra.update(_PUNCT.sub("", expansion.lower()).split())
+        query_terms = query_terms | (extra - _STOPWORDS_PT)
         if not query_terms:
             return results
 
