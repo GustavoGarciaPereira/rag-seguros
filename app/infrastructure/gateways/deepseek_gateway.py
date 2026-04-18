@@ -138,7 +138,7 @@ class DeepSeekGateway(LLMGateway):
 
     def __init__(self, max_retries: int = 3, max_tokens: int = 4000) -> None:
         if not settings.deepseek_api_key:
-            raise ValueError("DEEPSEEK_API_KEY não encontrada no arquivo .env")
+            raise ValueError("DEEPSEEK_API_KEY não encontrada. Defina no arquivo .env ou como variável de ambiente do sistema.")
 
         self._client = OpenAI(
             api_key=settings.deepseek_api_key,
