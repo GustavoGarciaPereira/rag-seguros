@@ -37,7 +37,7 @@ TEST_QUERIES = [
         "filter": {},
         "required_sections": [],
         "min_chars": 300,
-        "required_terms": ["Bradesco", "Allianz"],
+        "required_terms": ["Bradesco", "Allianz", "180 dias"],
     },
 ]
 
