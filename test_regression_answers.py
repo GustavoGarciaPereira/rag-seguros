@@ -16,6 +16,9 @@ import os
 import sys
 from typing import Any, Dict, List
 
+from dotenv import load_dotenv
+load_dotenv()
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 # ---------------------------------------------------------------------------
