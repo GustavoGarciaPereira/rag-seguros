@@ -19,6 +19,9 @@ python reindex.py [--pdf-dir ./pdfs] [--yes]
 
 # Retrieval quality regression test (no pytest, exit 0 = pass, exit 1 = fail)
 python test_regression.py
+
+# Structural answer quality regression test (calls LLM; API timeout = conditional pass)
+python test_regression_answers.py
 ```
 
 The server runs at `http://localhost:8000`. API docs are auto-generated at `/docs`.
@@ -44,7 +47,7 @@ RAG (Retrieval-Augmented Generation) API for insurance document analysis built o
 2. **Chunking** → `InsuranceSemanticChunker` splits at clause/paragraph/article boundaries (1200-char target, 200-char overlap); cross-page overlap is handled inside `IngestDocument`. Each chunk is prefixed with its parent section title (`[SEÇÃO: <título>]\n`) to improve semantic score of tables and lists relative to dense paragraphs.
 3. **Deduplication** → `IngestDocument` computes SHA-256 of the file; if hash exists in the `DocumentCatalog`, skips re-embedding or only updates metadata in-place
 4. **Vectorization** → `FAISSVectorRepository` encodes chunks with `sentence-transformers` (`all-MiniLM-L6-v2`, 384-dim) and persists to FAISS + SQLite
-5. **Query** → `AskInsuranceQuestion`: FAISS fetch_k (= top_k × 4, default 60) → `KeywordOverlapReranker` (70% semantic + 30% PT term overlap) → slice top_k → `DeepSeekGateway`
+5. **Query** → `AskInsuranceQuestion`: FAISS fetch_k (= top_k × 4, default 60) → `KeywordOverlapReranker` (70% semantic + 30% PT term overlap + `_DOMAIN_EXPANSIONS` sinônimos de domínio) → slice top_k → `DeepSeekGateway`
 6. **Generation** → DeepSeek `deepseek-chat` via **SSE streaming** (`stream=True`); 4-section audit response with Chain-of-Thought (Análise Prévia Silenciosa), cross-reference resolution and formula transcription; max_tokens 4000, timeout 30s, 3 retries with exponential backoff (non-streaming path only)
 
 ### Layer responsibilities
@@ -138,7 +141,7 @@ def get_inventory_use_case() -> GetInventory:
 - [app/use_cases/ingest_document.py](app/use_cases/ingest_document.py) — `IngestDocument.execute(file_path, metadata, source_name)`. SHA-256 dedup: skip if identical hash+metadata (including `ramo`) / update metadata in-place if content unchanged / full re-index if new. Owns cross-page overlap logic.
 - [app/use_cases/answer_question.py](app/use_cases/answer_question.py) — `AskInsuranceQuestion`. Two public methods: `execute(...)` → `(answer, reranked_results)` (non-streaming, used by health/test paths); `execute_stream(...)` → `(reranked_results, Iterator[str])` — does FAISS search + reranking eagerly, returns a lazy text generator for SSE. Both implement **oversampling**: FAISS is queried with `fetch_k = top_k * 4`, the reranker scores all candidates, and a final `[:top_k]` slice keeps only the best results for the LLM. Both emit `DEBUG` logs for recall debugging.
 - [app/use_cases/get_inventory.py](app/use_cases/get_inventory.py) — `GetInventory.execute()` → `{total_documents, total_chunks, by_seguradora, documents}`.
-- [app/infrastructure/repositories/faiss_repository.py](app/infrastructure/repositories/faiss_repository.py) — `FAISSVectorRepository`: pure vector ops. Composes `SQLiteMetadataStore`. `add` maps `c.metadata.ramo` into the entries dict (bug fix: previously omitted, causing chunks to always store "Desconhecido"). `search` returns `ramo` in `SearchResult`. `delete_all()` resets the FAISS index + truncates the `chunks` table — does not touch `documents`.
+- [app/infrastructure/repositories/faiss_repository.py](app/infrastructure/repositories/faiss_repository.py) — `FAISSVectorRepository`: pure vector ops. Composes `SQLiteMetadataStore`. `add` maps `c.metadata.ramo` into the entries dict (bug fix: previously omitted, causing chunks to always store "Desconhecido"). `search` applies filter with **case-insensitive** comparison (`.lower()` on both sides, mirroring `COLLATE NOCASE` in SQLite) and emits `DEBUG` logs (`faiss_pos`, `ramo`, `seguradora`, `OK/SKIP`) for every candidate. `delete_all()` resets the FAISS index + truncates the `chunks` table — does not touch `documents`.
 - [app/infrastructure/repositories/sqlite_metadata.py](app/infrastructure/repositories/sqlite_metadata.py) — `SQLiteMetadataStore`: `chunks` table with `COLLATE NOCASE` on `seguradora` and `ramo`. Manages `faiss_pos` renumbering after deletions. `update_document_metadata` patches seguradora/ano/tipo/ramo without touching embeddings. `truncate_all()` removes all rows; next `insert_many` restarts from `faiss_pos = 0`.
 - [app/infrastructure/repositories/sqlite_catalog.py](app/infrastructure/repositories/sqlite_catalog.py) — `SQLiteDocumentCatalog`: `documents` table with `COLLATE NOCASE` on `seguradora` and `ramo`. Stores one row per PDF with `file_hash` (SHA-256 UNIQUE), `chunk_count`, `created_at`, `ramo`.
 - [app/infrastructure/chunkers/semantic_chunker.py](app/infrastructure/chunkers/semantic_chunker.py) — `InsuranceSemanticChunker`. `_fixed_chunk` is marked as **Rust/PyO3 optimization target**. Module-level helpers: `_SECTION_TITLE_RE` (regex for Art., SEÇÃO, CAPÍTULO, CLÁUSULA, roman numerals, etc.), `_is_section_title(text)` (regex match OR all-caps ≥2-word heuristic ≤80 chars), `_apply_section_prefix(chunk_text, section_title)` (prepends `[SEÇÃO: <título>]\n`; skipped if the chunk already opens with the title). `_merge_segments` tracks `last_section` / `chunk_section` to inject the prefix into every output chunk.
@@ -146,7 +149,8 @@ def get_inventory_use_case() -> GetInventory:
 - [app/core/dependencies.py](app/core/dependencies.py) — single wiring point. Exposes `get_ask_use_case`, `get_ingest_use_case`, `get_inventory_use_case`, `get_vector_service`, `get_llm_service`, `get_document_catalog`.
 - [ingest.py](ingest.py) — CLI bulk-ingestion de alta produtividade. Fluxo em 4 fases: coleta de metadados com auto-detect + session memory → resumo do lote com prévia de renomeação → renomeação física → indexação. Usa `get_ingest_use_case()` — caminho idêntico à API.
 - [reindex.py](reindex.py) — re-indexação completa não-interativa. Exibe tabela de prévia com metadados auto-detectados pelo nome do arquivo, pede confirmação (ou `--yes`), apaga `faiss_index.bin` + `metadata.db` inteiros, depois indexa todos os PDFs de `--pdf-dir`. Import de `get_ingest_use_case` é deferido para após o wipe — garante que os `lru_cache` singletons sejam criados com os arquivos ausentes (índice vazio). Útil após mudanças no chunker que exigem re-embedding completo.
-- [test_regression.py](test_regression.py) — script standalone de regressão de qualidade de recuperação (sem pytest). Chama `get_ask_use_case().execute()` diretamente com a query "carro reserva", `filter={"ramo": "Automovel"}`, `top_k=15`. Marca ✅ chunks que contêm termos-alvo, imprime tabela com rank/score/fonte/snippet. Exit 0 se ≥5 chunks relevantes, exit 1 caso contrário.
+- [test_regression.py](test_regression.py) — script standalone de regressão de qualidade de recuperação (sem pytest). Chama `get_ask_use_case().execute()` diretamente com a query "carro reserva", `filter={"ramo": "Automovel"}`, `top_k=15`. Marca ✅ chunks que contêm termos-alvo, imprime tabela com rank/score/fonte/snippet. Exit 0 se ≥5 chunks relevantes, exit 1 caso contrário. Inclui `load_dotenv()` no topo para compatibilidade CI.
+- [test_regression_answers.py](test_regression_answers.py) — regressão estrutural de qualidade de resposta (chama LLM). Dois casos: (1) cobertura de para-choque Allianz/Automovel — verifica seções "o que cobre / limites / não cobre"; (2) indenização por perda total sem filtro — verifica presença de "Bradesco", "Allianz" e "180 dias" na resposta. Falhas de rede/timeout retornam `True` (pass condicional, sem quebrar CI). Salva resposta em `test_output_<slug>.txt`. Inclui `load_dotenv()` no topo.
 - [tests/test_semantic_chunker.py](tests/test_semantic_chunker.py) — 16 testes unitários para o chunker: `TestIsSectionTitle` (9 casos), `TestApplySectionPrefix` (3 casos), `TestInsuranceSemanticChunker` (4 casos de integração). Rode com `python -m pytest tests/`.
 
 ### API endpoints
@@ -315,7 +319,12 @@ O prompt vive em `_SYSTEM_PROMPT` dentro de [app/infrastructure/gateways/deepsee
 | **ANÁLISE PRÉVIA SILENCIOSA** | Chain-of-Thought interno: mapeia cláusulas, referências cruzadas sumário↔conteúdo, fórmulas e ramo dominante antes de redigir |
 | **FÓRMULAS E CÁLCULOS** | Obriga transcrição literal de fórmulas em Markdown; proíbe paráfrase |
 | **PROIBIÇÃO DE DESCULPAS** | Impede "não encontrei" enquanto houver número de cláusula ou referência de página nos trechos |
-| **FORMATO OBRIGATÓRIO** | 4 seções: Veredito Direto / Detalhes Técnicos / Letra Miúda / Prova Documental |
+| **FORMATO OBRIGATÓRIO** | 4 seções: Veredito Direto / Detalhes Técnicos / Letra Miúda / Prova Documental. Dentro de "Detalhes Técnicos", 3 regras condicionais (ver abaixo) |
+
+Regras condicionais em "DETALHES TÉCNICOS":
+1. **Coberturas específicas** ("como funciona", "o que cobre", "cobertura de X"): seção deve ser organizada em **O que cobre → Limites de utilização → O que não cobre** (nessa ordem).
+2. **Múltiplas seguradoras no contexto sem filtro**: comparação explícita lado a lado de valores, prazos e condições de todas as seguradoras presentes. Nunca omitir.
+3. **Allianz + veículo 0 km / valor de novo**: mencionar EXPLICITAMENTE o prazo de **180 dias contados da entrega** no corpo da resposta (não apenas nas citações).
 
 Parâmetros injetados dinamicamente no prompt: `{context}` (trechos formatados) e `{n_chunks}` (contagem real de trechos, usada nas instruções de exaustão).
 
@@ -340,7 +349,32 @@ Configuração do modelo: `temperature=0.3`, `max_tokens=4000`, `timeout=30s`, `
 - `LOG_LEVEL=DEBUG` exposes recall logs from the use case:
   - `"Retrieval: M chunks retornados pelo FAISS."` (M = top_k × 4)
   - `"Reranking: M avaliados, top K retidos para o LLM."`
+  - `faiss_pos=N ramo=... seguradora=... filter=... → OK/SKIP` — emitido por cada candidato no `search` do FAISS (útil para investigar vazamento de ramo)
 - `LOG_LEVEL` env var controls verbosity (default `INFO`)
+
+### KeywordOverlapReranker — expansão de domínio
+
+`_DOMAIN_EXPANSIONS` (dict em [keyword_reranker.py](app/infrastructure/rerankers/keyword_reranker.py)) mapeia termos da query a sinônimos de domínio que são adicionados ao conjunto de termos antes do cálculo de overlap:
+
+| Termo da query | Expansão |
+|---|---|
+| `perda` / `indenização` | vmr, fipe, 0km, 180, 365 |
+| `total` | 0km, zero quilômetro, 180, 365, vmr |
+| `carro` | veículo, automóvel, reserva, locação |
+| `reserva` | carro, locação, diárias, básico, plus, premium |
+| `franquia` | dedutível, participação, obrigatória |
+| `cobertura` | cláusula, assistência, incluído, compreendido |
+
+Isso melhora o recall de chunks que descrevem prazos e valores numéricos sem repetir as palavras exatas da query.
+
+### CI / GitHub Actions
+
+Workflow em [.github/workflows/test.yml](.github/workflows/test.yml) roda nos eventos `push` e `pull_request` para `main`, com dois jobs independentes:
+
+- **test-retrieval**: executa `python test_regression.py` (qualidade de recuperação, sem LLM)
+- **test-answers**: executa `python test_regression_answers.py` (qualidade de resposta, com LLM)
+
+Ambos os jobs têm um step **"Debug - check env variable"** que falha imediatamente se `DEEPSEEK_API_KEY` estiver vazia, evitando erros obscuros. A chave é injetada via `secrets.DEEPSEEK_API_KEY` do repositório. `ADMIN_API_KEY` é passada como `dummy` (não usada nos testes).
 
 ### UI filters (static/index.html + static/app.js)
 
