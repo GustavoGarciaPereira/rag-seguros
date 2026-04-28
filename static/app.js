@@ -16,6 +16,54 @@ async function safeParseJson(response) {
     catch { return { detail: `Resposta invalida do servidor (HTTP ${response.status})` }; }
 }
 
+// Extrai mensagem legível de qualquer formato de erro SSE.
+// NUNCA concatena objeto diretamente com string.
+function safeErrorMsg(data) {
+    if (typeof data === 'string') return data;
+    if (data && typeof data === 'object') {
+        if (Array.isArray(data)) {
+            // Pydantic validation errors: [{loc: [...], msg: "..."}]
+            return data.map(e => e.msg || JSON.stringify(e)).join('; ');
+        }
+        return data.detail || data.message || data.error || JSON.stringify(data);
+    }
+    return String(data);
+}
+
+// Exibe um balão de erro temporário que some após 8 segundos.
+let _errorBubbleTimer = null;
+function showErrorBubble(message) {
+    // Remove erro anterior se existir
+    const prev = document.getElementById('error-bubble');
+    if (prev) prev.remove();
+    if (_errorBubbleTimer) clearTimeout(_errorBubbleTimer);
+
+    const bubble = document.createElement('div');
+    bubble.id = 'error-bubble';
+    bubble.className = 'chat-message-system max-w-md mx-auto p-3 mb-4 text-center fade-in bg-red-50 border border-red-200 rounded-lg';
+    bubble.innerHTML = `
+        <div class="flex items-center justify-center space-x-2 text-sm text-red-700">
+            <i class="fas fa-exclamation-circle"></i>
+            <span>${escapeHtml(message)}</span>
+        </div>
+    `;
+    const container = document.getElementById('chat-messages');
+    container.insertBefore(bubble, container.firstChild);
+    container.scrollTop = 0;
+
+    _errorBubbleTimer = setTimeout(() => {
+        bubble.classList.add('fade-out');
+        setTimeout(() => { if (bubble.parentNode) bubble.remove(); }, 300);
+    }, 8000);
+}
+
+// Verifica se estamos em ambiente de desenvolvimento local.
+function isLocalhost() {
+    try {
+        return window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    } catch { return false; }
+}
+
 // ------------------------------------------------------------------ //
 // Drawer                                                               //
 // ------------------------------------------------------------------ //
@@ -305,12 +353,48 @@ async function loadStats() {
 function enableChat() {
     if (!chatInput.disabled) return;
     chatInput.disabled = false;
-    sendBtn.disabled = false;
+    updateSendButton();
     document.getElementById('input-hint').innerHTML =
         '<i class="fas fa-check-circle mr-1 text-green-500"></i> Chat habilitado! Faca sua pergunta.';
     chatInput.placeholder = 'Ex: Qual e o valor da franquia?';
     addSystemMessage('Chat habilitado! Voce pode fazer perguntas sobre o documento carregado.');
 }
+
+// ------------------------------------------------------------------ //
+// Validação de input + contador de caracteres                         //
+// ------------------------------------------------------------------ //
+const MAX_CHARS = 500;
+const MIN_EFFECTIVE_CHARS = 5;
+
+function updateCharCounter() {
+    const counter = document.getElementById('char-counter');
+    if (!counter) return;
+    const len = chatInput.value.length;
+    counter.textContent = len + '/' + MAX_CHARS;
+    counter.className = 'absolute right-3 top-1/2 -translate-y-1/2 text-xs pointer-events-none ' +
+        (len >= MAX_CHARS ? 'text-red-500 font-bold' : len >= 450 ? 'text-orange-500' : 'text-gray-400');
+}
+
+function validateInput() {
+    const raw = chatInput.value;
+    const trimmed = raw.trim();
+    const effectiveLen = trimmed.replace(/\s/g, '').length;
+    if (trimmed.length === 0) return { valid: false, reason: '' };
+    if (effectiveLen < MIN_EFFECTIVE_CHARS) return { valid: false, reason: 'A pergunta precisa ter pelo menos 5 caracteres.' };
+    if (raw.length > MAX_CHARS) return { valid: false, reason: 'A pergunta excede o limite de ' + MAX_CHARS + ' caracteres.' };
+    return { valid: true, reason: '' };
+}
+
+function updateSendButton() {
+    if (isProcessing) return;
+    const result = validateInput();
+    sendBtn.disabled = !result.valid;
+}
+
+chatInput.addEventListener('input', function () {
+    updateCharCounter();
+    updateSendButton();
+});
 
 // ------------------------------------------------------------------ //
 // Mensagens                                                            //
@@ -515,7 +599,18 @@ function buildStreamingBubble(msgId, contextData) {
 // ------------------------------------------------------------------ //
 async function sendQuestion() {
     const question = chatInput.value.trim();
-    if (!question || isProcessing) return;
+    if (isProcessing) return;
+
+    // ── Validação de input ──────────────────────────────────────────
+    const validation = validateInput();
+    if (!validation.valid) {
+        if (validation.reason) showErrorBubble(validation.reason);
+        return;
+    }
+
+    // Remove error bubble on valid send
+    const prevError = document.getElementById('error-bubble');
+    if (prevError) prevError.remove();
 
     addToHistory(question);
     addMessage(question, 'user');
@@ -529,6 +624,8 @@ async function sendQuestion() {
     }
 
     chatInput.value = '';
+    updateCharCounter();
+    updateSendButton();
 
     const typingIndicator = buildTypingIndicator();
     chatMessages.appendChild(typingIndicator);
@@ -548,17 +645,51 @@ async function sendQuestion() {
         if (selectedDocumentType) requestBody.document_type = selectedDocumentType;
         if (currentSessionId) requestBody.session_id = currentSessionId;
 
-        const response = await fetch('/ask', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(requestBody)
-        });
+        // ── Debug: log do payload em dev ────────────────────────────
+        if (isLocalhost()) {
+            console.debug('[sendQuestion] payload:', requestBody);
+        }
 
-        // Non-streaming HTTP errors (e.g. 400 validation, 500 before stream starts)
+        let response;
+        try {
+            response = await fetch('/ask', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(requestBody)
+            });
+        } catch (fetchErr) {
+            // Erro de rede (servidor offline, DNS, etc.)
+            typingIndicator.remove();
+            console.error('[sendQuestion] Erro de rede:', fetchErr);
+            showErrorBubble('Falha de conexão. Verifique sua internet.');
+            return;
+        }
+
+        // ── Tratamento de erros HTTP ─────────────────────────────────
         if (!response.ok || !response.body) {
             typingIndicator.remove();
-            const data = await safeParseJson(response);
-            addMessage(`Erro: ${data.detail || `HTTP ${response.status}`}`, 'assistant');
+            let errorMsg = 'Erro inesperado do servidor (código ' + response.status + ').';
+            try {
+                const data = await response.json();
+                if (data.detail) {
+                    if (Array.isArray(data.detail)) {
+                        // Erros de validação Pydantic
+                        errorMsg = data.detail.map(function (e) {
+                            return (e.loc ? e.loc.join(' → ') + ': ' : '') + (e.msg || '');
+                        }).join('; ');
+                    } else if (typeof data.detail === 'string') {
+                        errorMsg = data.detail;
+                    } else {
+                        errorMsg = safeErrorMsg(data.detail);
+                    }
+                } else if (data.message) {
+                    errorMsg = safeErrorMsg(data.message);
+                }
+            } catch (_) {
+                // response.json() falhou — usa fallback
+            }
+            if (isLocalhost()) console.debug('[sendQuestion] HTTP ' + response.status + ':', errorMsg);
+            showErrorBubble(errorMsg);
             return;
         }
 
@@ -577,19 +708,15 @@ async function sendQuestion() {
             buffer += decoder.decode(value, { stream: true });
 
             // SSE events are delimited by a blank line (\n\n or \r\n\r\n).
-            // We split on either variant so CRLF responses from proxies work too.
             const eventBlocks = buffer.split(/\r?\n\r?\n/);
-            buffer = eventBlocks.pop() ?? ''; // keep the incomplete trailing fragment
+            buffer = eventBlocks.pop() ?? '';
 
             for (const block of eventBlocks) {
                 if (!block.trim()) continue;
 
-                // Find the first "data:" line inside the block.
-                // SSE blocks can also carry "event:", "id:", comment lines, etc.
                 let jsonStr = null;
                 for (const line of block.split(/\r?\n/)) {
                     if (/^data:/.test(line)) {
-                        // Strip "data:" and any single leading space (per SSE spec)
                         jsonStr = line.replace(/^data:\s?/, '');
                         break;
                     }
@@ -614,7 +741,6 @@ async function sendQuestion() {
                         chatMessages.scrollTop = chatMessages.scrollHeight;
 
                     } else if (event.type === 'text') {
-                        // Guard: text before context on very fast responses
                         if (!msgDiv) {
                             typingIndicator.remove();
                             ({ msgDiv, textDiv } = buildStreamingBubble(msgId, []));
@@ -635,10 +761,9 @@ async function sendQuestion() {
                     } else if (event.type === 'error') {
                         if (typingIndicator.parentNode) typingIndicator.remove();
                         console.error('[SSE] Evento de erro recebido do servidor:', event.data);
-                        const errMsg = typeof event.data === 'object'
-                            ? (event.data.detail || event.data.message || JSON.stringify(event.data))
-                            : String(event.data);
-                        addMessage(`Erro ao processar: ${escapeHtml(errMsg)}`, 'assistant');
+                        const errMsg = safeErrorMsg(event.data);
+                        if (isLocalhost()) console.debug('[SSE] safeErrorMsg:', errMsg);
+                        showErrorBubble('Erro no processamento: ' + errMsg);
                     }
                 } catch (handlerErr) {
                     console.error('[SSE] Erro ao processar evento:', handlerErr, '| event:', event);
@@ -646,40 +771,51 @@ async function sendQuestion() {
             }
         }
 
-        // If the stream ended without any event (empty body / aborted connection),
-        // remove the spinner that would otherwise be stuck on screen.
+        // Stream ended without any event
         if (typingIndicator.parentNode) {
             typingIndicator.remove();
             addMessage('A resposta chegou vazia. Tente novamente.', 'assistant');
         }
 
-        // Re-render final markdown to ensure no partial Markdown tokens remain
+        // Re-render final markdown
         if (textDiv && fullText) {
             textDiv.innerHTML = marked.parse(fullText);
         }
 
-        // Hide sources when the LLM responded out-of-scope
-        const OUT_OF_SCOPE_PREFIX = 'Só consigo responder perguntas relacionadas a documentos de seguros';
+        // ── Resposta fora de escopo: oculta fontes + copy + ícone ℹ️ ─
+        var OUT_OF_SCOPE_PREFIX = 'Só consigo responder perguntas relacionadas a documentos de seguros';
         if (msgDiv && fullText && fullText.trimStart().startsWith(OUT_OF_SCOPE_PREFIX)) {
-            const sourcesRow = msgDiv.querySelector('.show-context-btn');
+            var sourcesRow = msgDiv.querySelector('.show-context-btn');
             if (sourcesRow && sourcesRow.parentElement) {
                 sourcesRow.parentElement.style.display = 'none';
             }
+            var copyBtn = msgDiv.querySelector('.copy-btn');
+            if (copyBtn) copyBtn.style.display = 'none';
+            // Adiciona ícone informativo
+            var respDiv = msgDiv.querySelector('.stream-text');
+            if (respDiv && respDiv.innerHTML.indexOf('ℹ️') === -1) {
+                respDiv.innerHTML = '<span style="font-size:1.2em;vertical-align:middle;">ℹ️</span> ' + respDiv.innerHTML;
+            }
         }
 
-        // Persist assistant response in chatMessagesArray
+        // Persist assistant response
         if (fullText) {
             chatMessagesArray.push({ role: 'assistant', content: fullText });
         }
 
+        if (isLocalhost()) {
+            console.debug('[sendQuestion] resposta completa (' + fullText.length + ' chars)');
+        }
+
     } catch (error) {
         console.error('[sendQuestion] Erro inesperado:', error);
-        console.error('[sendQuestion] Stack:', error?.stack);
-        document.getElementById('typing-indicator')?.remove();
-        addMessage('Erro de conexao com o servidor. Verifique se o servidor esta rodando.', 'assistant');
+        console.error('[sendQuestion] Stack:', error && error.stack);
+        var ti = document.getElementById('typing-indicator');
+        if (ti) ti.remove();
+        showErrorBubble('Erro de conexao com o servidor. Verifique se o servidor esta rodando.');
     } finally {
         isProcessing = false;
-        sendBtn.disabled = false;
+        updateSendButton();
         chatInput.focus();
     }
 }
