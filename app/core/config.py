@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     deepseek_api_key: str = ""
+    deepseek_model: str = "deepseek-v4-pro"
     admin_api_key: str = ""
     log_level: str = "INFO"
     enable_upload: str = "true"

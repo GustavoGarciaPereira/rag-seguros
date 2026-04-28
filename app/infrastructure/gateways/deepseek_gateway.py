@@ -160,7 +160,7 @@ class DeepSeekGateway(LLMGateway):
             base_url="https://api.deepseek.com",
             timeout=30.0,
         )
-        self._model = "deepseek-chat"
+        self._model = settings.deepseek_model
         self._max_retries = max_retries
         self._max_tokens = max_tokens
 

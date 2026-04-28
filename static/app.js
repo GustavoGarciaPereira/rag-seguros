@@ -67,6 +67,53 @@ let isProcessing = false;
 let messageCounter = 0;
 let selectedDocumentType = null;
 let wizardSinistroType = null;
+let currentSessionId = null;
+let chatMessagesArray = [];  // [{role: 'user'|'assistant', content: string}]
+let sessionTitleSaved = false;
+
+// ------------------------------------------------------------------ //
+// UUID helper                                                          //
+// ------------------------------------------------------------------ //
+function generateUUID() {
+    if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+        return crypto.randomUUID();
+    }
+    // Fallback para ambientes sem crypto.randomUUID
+    return 's_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10);
+}
+
+// ------------------------------------------------------------------ //
+// localStorage session helpers                                        //
+// ------------------------------------------------------------------ //
+const SESSIONS_KEY = 'chat_sessions';
+
+function getStoredSessions() {
+    try { return JSON.parse(localStorage.getItem(SESSIONS_KEY) || '[]'); }
+    catch { return []; }
+}
+
+function saveStoredSessions(sessions) {
+    try { localStorage.setItem(SESSIONS_KEY, JSON.stringify(sessions)); }
+    catch { /* localStorage cheio ou indisponível */ }
+}
+
+function upsertSessionTitle(sessionId, title) {
+    const sessions = getStoredSessions();
+    const idx = sessions.findIndex(s => s.session_id === sessionId);
+    if (idx >= 0) {
+        sessions[idx].title = title;
+        sessions[idx].timestamp = Date.now();
+    } else {
+        sessions.unshift({ session_id: sessionId, title, timestamp: Date.now() });
+    }
+    saveStoredSessions(sessions);
+    renderSessionList();
+}
+
+function getLastSessionId() {
+    const sessions = getStoredSessions();
+    return sessions.length > 0 ? sessions[0].session_id : null;
+}
 
 // ------------------------------------------------------------------ //
 // Sugestões por categoria                                              //
@@ -186,10 +233,19 @@ document.getElementById('wizard-finish').addEventListener('click', () => {
 // Inicialização                                                        //
 // ------------------------------------------------------------------ //
 document.addEventListener('DOMContentLoaded', function () {
+    // Tenta restaurar a última sessão; se não houver, cria nova
+    const lastId = getLastSessionId();
+    if (lastId) {
+        currentSessionId = lastId;
+        loadConversation(lastId);
+    } else {
+        currentSessionId = generateUUID();
+    }
     checkConnection();
     loadStats();
     checkInitialStatus();
     renderHistory();
+    renderSessionList();
 });
 
 async function checkInitialStatus() {
@@ -463,6 +519,15 @@ async function sendQuestion() {
 
     addToHistory(question);
     addMessage(question, 'user');
+    chatMessagesArray.push({ role: 'user', content: question });
+
+    // Salva título da sessão na primeira mensagem
+    if (!sessionTitleSaved) {
+        const title = question.length > 50 ? question.slice(0, 47) + '...' : question;
+        upsertSessionTitle(currentSessionId, title);
+        sessionTitleSaved = true;
+    }
+
     chatInput.value = '';
 
     const typingIndicator = buildTypingIndicator();
@@ -481,6 +546,7 @@ async function sendQuestion() {
         if (ramoFilter) filter.ramo = ramoFilter;
         if (Object.keys(filter).length > 0) requestBody.filter = filter;
         if (selectedDocumentType) requestBody.document_type = selectedDocumentType;
+        if (currentSessionId) requestBody.session_id = currentSessionId;
 
         const response = await fetch('/ask', {
             method: 'POST',
@@ -539,7 +605,9 @@ async function sendQuestion() {
                 }
 
                 try {
-                    if (event.type === 'context') {
+                    if (event.type === 'session') {
+                        currentSessionId = event.data;
+                    } else if (event.type === 'context') {
                         typingIndicator.remove();
                         ({ msgDiv, textDiv } = buildStreamingBubble(msgId, event.data));
                         chatMessages.appendChild(msgDiv);
@@ -567,7 +635,10 @@ async function sendQuestion() {
                     } else if (event.type === 'error') {
                         if (typingIndicator.parentNode) typingIndicator.remove();
                         console.error('[SSE] Evento de erro recebido do servidor:', event.data);
-                        addMessage(`Erro ao processar: ${escapeHtml(String(event.data))}`, 'assistant');
+                        const errMsg = typeof event.data === 'object'
+                            ? (event.data.detail || event.data.message || JSON.stringify(event.data))
+                            : String(event.data);
+                        addMessage(`Erro ao processar: ${escapeHtml(errMsg)}`, 'assistant');
                     }
                 } catch (handlerErr) {
                     console.error('[SSE] Erro ao processar evento:', handlerErr, '| event:', event);
@@ -585,6 +656,20 @@ async function sendQuestion() {
         // Re-render final markdown to ensure no partial Markdown tokens remain
         if (textDiv && fullText) {
             textDiv.innerHTML = marked.parse(fullText);
+        }
+
+        // Hide sources when the LLM responded out-of-scope
+        const OUT_OF_SCOPE_PREFIX = 'Só consigo responder perguntas relacionadas a documentos de seguros';
+        if (msgDiv && fullText && fullText.trimStart().startsWith(OUT_OF_SCOPE_PREFIX)) {
+            const sourcesRow = msgDiv.querySelector('.show-context-btn');
+            if (sourcesRow && sourcesRow.parentElement) {
+                sourcesRow.parentElement.style.display = 'none';
+            }
+        }
+
+        // Persist assistant response in chatMessagesArray
+        if (fullText) {
+            chatMessagesArray.push({ role: 'assistant', content: fullText });
         }
 
     } catch (error) {
@@ -724,6 +809,115 @@ chatInput.addEventListener('keypress', function (e) {
 });
 
 sendBtn.addEventListener('click', sendQuestion);
+
+// ------------------------------------------------------------------ //
+// Nova conversa                                                        //
+// ------------------------------------------------------------------ //
+function startNewConversation() {
+    // Salva a sessão atual se tiver mensagens
+    if (chatMessagesArray.length > 0 && currentSessionId) {
+        const title = chatMessagesArray.find(m => m.role === 'user');
+        upsertSessionTitle(currentSessionId, title ? title.content.slice(0, 50) : 'Sem título');
+    }
+    // Reseta estado
+    currentSessionId = generateUUID();
+    chatMessagesArray = [];
+    sessionTitleSaved = false;
+    messageCounter = 0;
+    // Limpa DOM
+    const container = document.getElementById('chat-messages');
+    container.innerHTML = `
+        <div class="chat-message-system max-w-md mx-auto p-3 mb-4 text-center fade-in">
+            <i class="fas fa-robot mr-2"></i>
+            Ola! Sou seu assistente de seguros. Faca upload de um documento PDF e faca perguntas sobre ele.
+        </div>
+    `;
+    renderSessionList();
+}
+
+const newConvBtn = document.getElementById('new-conversation-btn');
+if (newConvBtn) {
+    newConvBtn.addEventListener('click', startNewConversation);
+}
+
+// ------------------------------------------------------------------ //
+// Lista de sessões na sidebar                                          //
+// ------------------------------------------------------------------ //
+function renderSessionList() {
+    const listEl = document.getElementById('session-list');
+    if (!listEl) return;
+    const sessions = getStoredSessions();
+    if (sessions.length === 0) {
+        listEl.innerHTML = '<p class="text-gray-400 text-sm italic">Nenhuma conversa salva.</p>';
+        return;
+    }
+    listEl.innerHTML = sessions.map(s => {
+        const activeClass = s.session_id === currentSessionId ? 'bg-blue-50 border-blue-200' : 'border-transparent hover:bg-gray-50';
+        const dateStr = new Date(s.timestamp).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
+        return `
+            <div class="session-item cursor-pointer p-2 rounded-lg text-sm text-gray-700 border ${activeClass} transition duration-150" data-sid="${escapeHtml(s.session_id)}" title="${escapeHtml(s.title)}">
+                <div class="truncate font-medium">${escapeHtml(s.title)}</div>
+                <div class="text-xs text-gray-400">${dateStr}</div>
+            </div>
+        `;
+    }).join('');
+    // Bind click handlers
+    listEl.querySelectorAll('.session-item').forEach(item => {
+        item.addEventListener('click', () => {
+            const sid = item.dataset.sid;
+            if (sid === currentSessionId) return;
+            // Salva sessão atual antes de trocar
+            if (chatMessagesArray.length > 0 && currentSessionId) {
+                const title = chatMessagesArray.find(m => m.role === 'user');
+                upsertSessionTitle(currentSessionId, title ? title.content.slice(0, 50) : 'Sem título');
+            }
+            loadConversation(sid);
+            closeDrawer();
+        });
+    });
+}
+
+async function loadConversation(sessionId) {
+    currentSessionId = sessionId;
+    chatMessagesArray = [];
+    messageCounter = 0;
+    sessionTitleSaved = true; // já tem título no localStorage
+    const container = document.getElementById('chat-messages');
+    container.innerHTML = '<div class="text-center text-gray-400 text-sm py-4"><i class="fas fa-spinner animate-spin mr-2"></i>Carregando conversa...</div>';
+    try {
+        const resp = await fetch(`/api/conversations/${encodeURIComponent(sessionId)}`);
+        if (!resp.ok) {
+            container.innerHTML = `
+                <div class="chat-message-system max-w-md mx-auto p-3 mb-4 text-center fade-in">
+                    <i class="fas fa-robot mr-2"></i>
+                    Ola! Sou seu assistente de seguros. Faca upload de um documento PDF e faca perguntas sobre ele.
+                </div>
+            `;
+            chatMessagesArray = [];
+            sessionTitleSaved = false;
+            return;
+        }
+        const data = await resp.json();
+        const msgs = data.messages || [];
+        container.innerHTML = '';
+        msgs.forEach(m => {
+            addMessage(m.content, m.role);
+            chatMessagesArray.push({ role: m.role, content: m.content });
+            messageCounter++;
+        });
+        // Scroll to bottom
+        container.scrollTop = container.scrollHeight;
+    } catch {
+        container.innerHTML = `
+            <div class="chat-message-system max-w-md mx-auto p-3 mb-4 text-center fade-in">
+                <i class="fas fa-robot mr-2"></i>
+                Ola! Sou seu assistente de seguros. Faca upload de um documento PDF e faca perguntas sobre ele.
+            </div>
+        `;
+        chatMessagesArray = [];
+    }
+    renderSessionList();
+}
 
 // ------------------------------------------------------------------ //
 // Drag & Drop                                                          //

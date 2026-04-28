@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.dependencies import get_vector_service
-from app.api.routes import ask, health, inventory, upload
+from app.api.routes import ask, conversations, health, inventory, upload
 
 app = FastAPI(
     title="Multi-Seguradora Insurance RAG Assistant",
@@ -45,3 +45,4 @@ app.include_router(health.router)
 app.include_router(upload.router)
 app.include_router(ask.router)
 app.include_router(inventory.router)
+app.include_router(conversations.router)

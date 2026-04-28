@@ -90,13 +90,24 @@
             </button>
         </div>
 
+        <!-- Histórico de Conversas -->
+        <div class="p-5 border-t">
+            <h2 class="text-sm font-bold text-gray-700 uppercase tracking-wide mb-3 flex items-center">
+                <i class="fas fa-comments text-blue-500 mr-2"></i>
+                Conversas
+            </h2>
+            <div id="session-list" class="space-y-1 overflow-y-auto scrollbar-thin" style="max-height: 200px;">
+                <p class="text-gray-400 text-sm italic">Nenhuma conversa salva.</p>
+            </div>
+        </div>
+
         <!-- Histórico da Sessão -->
-        <div class="p-5 flex-grow">
+        <div class="p-5 border-t flex-grow">
             <h2 class="text-sm font-bold text-gray-700 uppercase tracking-wide mb-3 flex items-center">
                 <i class="fas fa-history text-purple-500 mr-2"></i>
                 Histórico da Sessão
             </h2>
-            <div id="history-list" class="space-y-1 overflow-y-auto scrollbar-thin" style="max-height: 260px;">
+            <div id="history-list" class="space-y-1 overflow-y-auto scrollbar-thin" style="max-height: 160px;">
                 <p class="text-gray-400 text-sm italic">Nenhuma pergunta ainda.</p>
             </div>
             <button id="clear-history"
@@ -247,6 +258,13 @@
                             <option value="Construcao Civil">Construcao Civil</option>
                             <option value="Residencial">Residencial</option>
                         </select>
+                        <div class="w-px h-6 bg-gray-300 mx-1"></div>
+                        <button id="new-conversation-btn"
+                            class="text-sm border border-gray-300 rounded-lg px-3 py-1.5 bg-white hover:bg-gray-50 text-gray-600 transition duration-200 flex items-center space-x-1"
+                            title="Iniciar nova conversa">
+                            <i class="fas fa-plus text-xs"></i>
+                            <span>Nova conversa</span>
+                        </button>
                     </div>
                 </div>
             </div>

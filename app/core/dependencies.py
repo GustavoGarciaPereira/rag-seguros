@@ -13,6 +13,8 @@ from app.infrastructure.parsers.pdf_parser import PdfDocumentParser
 from app.infrastructure.rerankers.keyword_reranker import KeywordOverlapReranker
 from app.infrastructure.repositories.faiss_repository import FAISSVectorRepository
 from app.infrastructure.repositories.sqlite_catalog import SQLiteDocumentCatalog
+from app.domain.interfaces.chat_history import ChatHistory
+from app.infrastructure.repositories.sqlite_chat_history import SQLiteChatHistory
 from app.use_cases.answer_question import AskInsuranceQuestion
 from app.use_cases.get_inventory import GetInventory
 from app.use_cases.ingest_document import IngestDocument
@@ -55,13 +57,20 @@ def _document_catalog() -> SQLiteDocumentCatalog:
     return SQLiteDocumentCatalog(_DB_PATH)
 
 
+@lru_cache(maxsize=1)
+def _chat_history() -> SQLiteChatHistory:
+    return SQLiteChatHistory()
+
+
 # ------------------------------------------------------------------
 # Use Cases (injetados nas rotas via Depends)
 # ------------------------------------------------------------------
 
 
 def get_ask_use_case() -> AskInsuranceQuestion:
-    return AskInsuranceQuestion(_vector_repo(), _reranker(), _llm_gateway())
+    return AskInsuranceQuestion(
+        _vector_repo(), _reranker(), _llm_gateway(), _chat_history()
+    )
 
 
 def get_ingest_use_case() -> IngestDocument:
@@ -90,3 +99,8 @@ def get_llm_service() -> DeepSeekGateway:
 def get_document_catalog() -> SQLiteDocumentCatalog:
     """Mantido para health.py (/stats → inventory summary)."""
     return _document_catalog()
+
+
+def get_chat_history() -> ChatHistory:
+    """Expõe o singleton ChatHistory para a rota de conversas."""
+    return _chat_history()

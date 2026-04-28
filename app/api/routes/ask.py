@@ -1,6 +1,7 @@
 import json as _json
 import logging
 import time as _time
+import uuid as _uuid
 from typing import Generator
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -40,10 +41,16 @@ def ask_question(
     seguradora = data.filter.get("seguradora") if data.filter else None
     logger.info("Filtro recebido via UI: %s", data.filter)
 
+    session_id = data.session_id or str(_uuid.uuid4())
+
     def sse_stream() -> Generator[str, None, None]:
+        # Emit session_id como primeiro evento (mesmo se já fornecido pelo cliente)
+        yield f"data: {_json.dumps({'type': 'session', 'data': session_id})}\n\n"
+
         # execute_stream is a plain sync method — safe to call from a sync generator.
         logger.info(
-            "SSE stream iniciado | pergunta='%s...' top_k=%d filter=%s",
+            "SSE stream iniciado | session=%s | pergunta='%s...' top_k=%d filter=%s",
+            session_id,
             data.question[:60],
             data.top_k,
             data.filter,
@@ -56,6 +63,7 @@ def ask_question(
                 filter_dict=data.filter,
                 seguradora=seguradora,
                 document_type=data.document_type,
+                session_id=session_id,
             )
 
             if not reranked:

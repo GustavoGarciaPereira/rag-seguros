@@ -9,3 +9,4 @@ sentence-transformers>=2.7.0
 huggingface_hub>=0.23.0,<1.0.0
 faiss-cpu==1.13.2
 numpy>=1.25.0,<2.0.0
+#pip install torch==2.2.0+cpu --index-url https://download.pytorch.org/whl/cpu 
