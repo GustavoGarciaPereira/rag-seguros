@@ -31,7 +31,20 @@ jobs:
         env:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           ADMIN_API_KEY: dummy
-        run: python test_regression.py
+        run: python tests/test_regression_retrieval.py
+
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run unit tests (pytest, skip slow)
+        run: python -m pytest tests/ -m "not slow" -v
 
   test-answers:
     runs-on: ubuntu-latest
@@ -57,4 +70,4 @@ jobs:
         env:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           ADMIN_API_KEY: dummy
-        run: python test_regression_answers.py
+        run: python tests/test_regression_answers.py

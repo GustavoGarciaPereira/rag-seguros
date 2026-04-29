@@ -11,3 +11,7 @@ pdfs/
 temp_uploads/
 test_output_Como_é_calculada_a_indenização_por_perda.txt
 test_output_como_funciona_a_cobertura_de_troca_de_pa.txt
+
+# Cobertura de testes
+htmlcov/
+.coverage

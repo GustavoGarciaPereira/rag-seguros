@@ -126,18 +126,29 @@ A IA segue um protocolo de 4 etapas antes de redigir:
 ## 🧪 Qualidade e Testes
 
 ```bash
-# Teste de regressão de qualidade de recuperação (sem pytest)
-python test_regression.py
-# Exit 0 = ≥5/15 chunks relevantes para query "carro reserva" com ramo=Automovel
+# Todos os testes (unitários + regressão via pytest)
+pytest tests/
 
-# Teste de regressão de qualidade das respostas (estrutural)
-python test_regression_answers.py
-# Exit 0 = respostas atendem aos critérios de seções e tamanho mínimo
+# Testes rápidos (pula testes que chamam LLM real — DeepSeek)
+pytest tests/ -m "not slow"
 
-# Testes unitários do chunker
-python -m pytest tests/
-# 16 testes: _is_section_title, _apply_section_prefix, integração
+# Cobertura
+pytest tests/ --cov=app --cov-report=term-missing
+./scripts/coverage.sh          # terminal + relatório HTML
+
+# Testes de regressão (execução standalone alternativa)
+python tests/test_regression_retrieval.py   # qualidade de recuperação
+python tests/test_regression_answers.py     # qualidade das respostas (chama LLM)
+python tests/test_chat_memory.py            # integração de memória de sessão
 ```
+
+| Comando | O que testa |
+|---------|-------------|
+| `pytest tests/` | Todos os testes (unitários + regressão) |
+| `pytest tests/ -m "not slow"` | Apenas testes sem LLM externo |
+| `python tests/test_regression_retrieval.py` | ≥5/15 chunks relevantes para "carro reserva" (standalone) |
+| `python tests/test_regression_answers.py` | Seções obrigatórias e tamanho mínimo na resposta (standalone) |
+| `./scripts/coverage.sh` | Cobertura do pacote `app/` com relatório HTML |
 
 ---
 

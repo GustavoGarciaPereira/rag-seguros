@@ -5,9 +5,11 @@ Verifica que as respostas a perguntas de cobertura contêm as seções obrigató
 e atingem o tamanho mínimo esperado.
 
 Uso:
-    python test_regression_answers.py
+    python tests/test_regression_answers.py          # standalone
+    python -m pytest tests/test_regression_answers.py -v  # via pytest
+    python -m pytest tests/ -m "not slow"                 # pula este teste
 
-Exit codes:
+Exit codes (standalone):
     0  — todos os testes passaram
     1  — um ou mais testes falharam
 """
@@ -16,10 +18,13 @@ import os
 import sys
 from typing import Any, Dict, List
 
+# Garante que a raiz do projeto esteja no sys.path para execução standalone
+_proj_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _proj_root not in sys.path:
+    sys.path.insert(0, _proj_root)
+
 from dotenv import load_dotenv
 load_dotenv()
-
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 # ---------------------------------------------------------------------------
 # Configuração dos testes
@@ -45,12 +50,14 @@ TEST_QUERIES = [
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _check_sections(answer: str, required: List[str]) -> Dict[str, bool]:
     lower = answer.lower()
     return {section: section in lower for section in required}
 
 
 def _run_test(query_config: Dict[str, Any]) -> bool:
+    """Executa uma query e valida a resposta.  Retorna True se passou."""
     from app.core.dependencies import get_ask_use_case
 
     use_case = get_ask_use_case()
@@ -111,9 +118,9 @@ def _run_test(query_config: Dict[str, Any]) -> bool:
     if not has_citation:
         print("  ⚠️  Aviso: nenhuma citação de fonte detectada na resposta")
 
-    # Salva saída para inspeção manual
+    # Salva saída para inspeção manual (na raiz do projeto)
     slug = query_config["question"].replace(" ", "_")[:40]
-    out_file = f"test_output_{slug}.txt"
+    out_file = os.path.join(_proj_root, f"test_output_{slug}.txt")
     with open(out_file, "w", encoding="utf-8") as f:
         f.write(f"PERGUNTA: {query_config['question']}\n")
         f.write(f"FILTRO: {query_config['filter']}\n\n")
@@ -126,8 +133,28 @@ def _run_test(query_config: Dict[str, Any]) -> bool:
 
     return passed
 
+
 # ---------------------------------------------------------------------------
-# Main
+# Pytest entry point (marcado como lento — chama API DeepSeek real)
+# ---------------------------------------------------------------------------
+
+import pytest  # noqa: E402 (import após helpers para ficar claro)
+
+
+@pytest.mark.slow
+def test_answer_quality() -> None:
+    """Valida qualidade estrutural das respostas geradas pelo LLM.
+
+    Este teste faz chamadas reais à API DeepSeek e é marcado como ``slow``.
+    Pule com ``pytest -m 'not slow'``.
+    """
+    for query_config in TEST_QUERIES:
+        passed = _run_test(query_config)
+        assert passed, f"Falhou na query: {query_config['question'][:60]}"
+
+
+# ---------------------------------------------------------------------------
+# Standalone entry point
 # ---------------------------------------------------------------------------
 
 def main() -> None:

@@ -1,21 +1,41 @@
 #!/usr/bin/env python3
-"""test_regression.py — valida qualidade de recuperação de chunks (sem servidor HTTP).
+"""test_regression_retrieval.py — valida qualidade de recuperação de chunks (sem servidor HTTP).
 
 Executa o pipeline RAG completo via get_ask_use_case() e verifica se os chunks
 retornados para a query de "carro reserva" contêm os termos esperados.
 
 Uso:
-    python test_regression.py
+    python tests/test_regression_retrieval.py
+    python -m pytest tests/test_regression_retrieval.py -v
 
-Exit codes:
+Exit codes (standalone):
     0  — >= 5 chunks relevantes retornados (teste passou)
     1  — < 5 chunks relevantes (qualidade de recuperação abaixo do esperado)
 """
 
+import os
 import sys
+
+# Garante que a raiz do projeto esteja no sys.path para execução standalone
+_proj_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _proj_root not in sys.path:
+    sys.path.insert(0, _proj_root)
 
 from dotenv import load_dotenv
 load_dotenv()
+
+# ---------------------------------------------------------------------------
+# Skip condicional: se o índice FAISS não existir, o teste não pode rodar
+# ---------------------------------------------------------------------------
+
+_FAISS_INDEX = os.path.join(_proj_root, "faiss_db", "faiss_index.bin")
+_NO_FAISS = not os.path.exists(_FAISS_INDEX)
+
+import pytest
+
+# Em modo pytest: skip silencioso se não há índice
+if _NO_FAISS and "pytest" in sys.modules:
+    pytest.skip("Índice FAISS não encontrado — execute 'python reindex.py' primeiro", allow_module_level=True)
 
 # ---------------------------------------------------------------------------
 # Configuração do teste
@@ -44,7 +64,38 @@ def _snippet(text: str, n: int = 80) -> str:
     return text[:n] + "…" if len(text) > n else text
 
 # ---------------------------------------------------------------------------
-# Main
+# Pytest entry point
+# ---------------------------------------------------------------------------
+
+@pytest.mark.timeout(60)
+def test_retrieval_quality():
+    """Verifica se ao menos MIN_RELEVANT chunks relevantes são retornados.
+
+    Usa apenas FAISS + reranker — sem chamar o LLM (DeepSeek).
+    """
+    if _NO_FAISS:
+        pytest.skip("Índice FAISS não encontrado")
+
+    from app.infrastructure.repositories.faiss_repository import FAISSVectorRepository
+    from app.infrastructure.rerankers.keyword_reranker import KeywordOverlapReranker
+
+    vector_repo = FAISSVectorRepository()
+    reranker = KeywordOverlapReranker()
+
+    # Busca + reranking (sem LLM — mesmo pipeline do AskInsuranceQuestion)
+    candidates = vector_repo.search(QUESTION, n_results=TOP_K * 4, filter_dict=FILTER)
+    results = reranker.rerank(QUESTION, candidates)[:TOP_K]
+
+    assert results, "Nenhum chunk retornado. Verifique se o índice está populado."
+
+    n_relevant = sum(1 for r in results if _is_relevant(r.text))
+    assert n_relevant >= MIN_RELEVANT, (
+        f"Apenas {n_relevant}/{len(results)} chunks relevantes "
+        f"(mínimo esperado: {MIN_RELEVANT})"
+    )
+
+# ---------------------------------------------------------------------------
+# Standalone entry point
 # ---------------------------------------------------------------------------
 
 def main() -> None:
@@ -57,17 +108,21 @@ def main() -> None:
     print(f"  Termos  : {RELEVANCE_TERMS}")
     print()
 
-    # Importação deferida: evita carregar FAISS/modelo se houver erro de setup
-    from app.core.dependencies import get_ask_use_case
+    if _NO_FAISS:
+        print("  ERRO: Índice FAISS não encontrado.")
+        print("  Execute 'python reindex.py' primeiro.")
+        sys.exit(1)
 
-    use_case = get_ask_use_case()
-    print("  Executando pipeline RAG (inclui chamada ao LLM)...\n")
+    # Busca + reranking direto (sem LLM)
+    from app.infrastructure.repositories.faiss_repository import FAISSVectorRepository
+    from app.infrastructure.rerankers.keyword_reranker import KeywordOverlapReranker
 
-    _answer, results = use_case.execute(
-        question=QUESTION,
-        top_k=TOP_K,
-        filter_dict=FILTER,
-    )
+    vector_repo = FAISSVectorRepository()
+    reranker = KeywordOverlapReranker()
+    print("  Executando busca FAISS + reranking (sem LLM)...\n")
+
+    candidates = vector_repo.search(QUESTION, n_results=TOP_K * 4, filter_dict=FILTER)
+    results = reranker.rerank(QUESTION, candidates)[:TOP_K]
 
     if not results:
         print("  ERRO: Nenhum chunk retornado. Verifique se o índice está populado.")

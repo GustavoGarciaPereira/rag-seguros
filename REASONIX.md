@@ -21,16 +21,16 @@ python reindex.py [--pdf-dir ./pdfs] [--yes]
 python -m pytest tests/
 
 # Regressão de qualidade de recuperação (sem LLM, exit 0 = pass)
-python test_regression.py
+python tests/test_regression_retrieval.py
 
 # Regressão estrutural de respostas (chama LLM, exit 0 = pass)
-python test_regression_answers.py
+python tests/test_regression_answers.py
 
 # Testes unitários de histórico de chat
 python -m pytest tests/test_chat_history.py -v
 
 # Teste de integração de memória de sessão
-python test_chat_memory.py
+python tests/test_chat_memory.py
 
 # Docker
 docker compose up --build
@@ -243,8 +243,10 @@ Regras condicionais importantes:
 | Arquivo | O que testa | Framework |
 |---|---|---|
 | `tests/test_semantic_chunker.py` | 16 testes unitários: `_is_section_title`, `_apply_section_prefix`, integração | pytest |
-| `test_regression.py` | Qualidade de recuperação: ≥5/15 chunks relevantes para "carro reserva" com ramo=Automovel | Script standalone |
-| `test_regression_answers.py` | Qualidade estrutural das respostas: seções obrigatórias, termos requeridos, tamanho mínimo | Script standalone |
+| `tests/test_keyword_reranker.py` | 10 testes unitários: domínio, scores, pesos, edge cases | pytest |
+| `tests/test_chat_history.py` | CRUD de mensagens, isolamento de sessão, limite | pytest |
+| `tests/test_regression_retrieval.py` | Qualidade de recuperação: >=5/15 chunks relevantes para "carro reserva" com ramo=Automovel | pytest + standalone |
+| `tests/test_regression_answers.py` | Qualidade estrutural das respostas: seções obrigatórias, termos requeridos, tamanho minimo | pytest (slow) + standalone |
 
 ## CI (GitHub Actions)
 
