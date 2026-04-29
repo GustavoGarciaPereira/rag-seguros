@@ -27,6 +27,57 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ---------------------------------------------------------------------------
+# Verificação de conectividade DeepSeek (executada UMA vez no import)
+# ---------------------------------------------------------------------------
+
+import pytest as _pytest  # noqa: E402
+
+def _can_reach_deepseek() -> bool:
+    """Verifica conectividade com a API DeepSeek em duas etapas:
+
+    1. TCP socket para api.deepseek.com:443 (3 s timeout) — barato e rápido.
+    2. Chamada mínima à API (5 s timeout) se a chave existir.
+    Se qualquer etapa falhar, o módulo é pulado via pytestmark.
+    """
+    api_key = os.getenv("DEEPSEEK_API_KEY")
+    if not api_key or api_key == "sua_chave_aqui":
+        return False
+
+    # Etapa 1: conectividade TCP (sem gastar créditos)
+    try:
+        import socket
+        sock = socket.create_connection(("api.deepseek.com", 443), timeout=3)
+        sock.close()
+    except Exception:
+        return False
+
+    # Etapa 2: chamada mínima à API com timeout curto
+    try:
+        from openai import OpenAI
+
+        client = OpenAI(
+            api_key=api_key,
+            base_url="https://api.deepseek.com",
+            timeout=5.0,
+            max_retries=0,
+        )
+        client.chat.completions.create(
+            model="deepseek-v4-pro",
+            messages=[{"role": "user", "content": "ping"}],
+            max_tokens=1,
+        )
+        return True
+    except Exception:
+        return False
+
+_CAN_REACH_DEEPSEEK = _can_reach_deepseek()
+
+pytestmark = _pytest.mark.skipif(
+    not _CAN_REACH_DEEPSEEK,
+    reason="API DeepSeek nao disponivel (sem chave ou sem conectividade). Execute localmente.",
+)
+
+# ---------------------------------------------------------------------------
 # Configuração dos testes
 # ---------------------------------------------------------------------------
 

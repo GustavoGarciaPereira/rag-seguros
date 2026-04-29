@@ -5,11 +5,27 @@ Usa mock do cliente OpenAI (openai.OpenAI) para testar:
 - generate() com e sem retry
 - generate_stream() com tokens
 - Formatação de contexto e prompt do sistema
+
+NENHUM teste chama a API real — o cliente OpenAI é sempre mockado.
 """
+import os
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from app.domain.entities.document import SearchResult
+
+
+# ------------------------------------------------------------------
+# Fixtures locais
+# ------------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def _mock_settings_api_key(monkeypatch):
+    """Garante que DEEPSEEK_API_KEY existe em qualquer ambiente (incluindo CI)."""
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-dummy-test-key-123456")
+    # Recarrega o módulo de settings para capturar o novo valor da env var
+    import app.core.config
+    monkeypatch.setattr(app.core.config.settings, "deepseek_api_key", "sk-dummy-test-key-123456")
 
 
 # ------------------------------------------------------------------
