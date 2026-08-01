@@ -15,3 +15,14 @@ test_output_como_funciona_a_cobertura_de_troca_de_pa.txt
 # Cobertura de testes
 htmlcov/
 .coverage
+reviews/*.csv
+prolog_db/*.pl
+.reasonix/settings.json
+reasonix.toml
+=2.4.0
+
+# Histórico de chat — dados de conversa não devem ser versionados
+faiss_db/chat_history.db
+faiss_db/chat_history.db-*
+faiss_db/*.db-shm
+faiss_db/*.db-wal

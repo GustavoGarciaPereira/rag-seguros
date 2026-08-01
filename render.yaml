@@ -16,3 +16,7 @@ services:
         sync: false   # valor definido manualmente no dashboard do Render
       - key: LOG_LEVEL
         value: INFO
+      # Uploads desligados no plano free: endpoint /upload aberto + indexação
+      # de PDFs podem causar OOM nos 512MB e envenenamento do índice.
+      - key: ENABLE_UPLOAD
+        value: "false"

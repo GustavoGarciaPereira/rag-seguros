@@ -72,3 +72,19 @@ def test_invalid_role_raises(chat_history):
 def test_empty_session(chat_history):
     msgs = chat_history.get_recent_messages("sessao-inexistente")
     assert msgs == []
+
+
+def test_purge_retention_days():
+    """Mensagens mais antigas que a retenção são removidas na próxima escrita."""
+    fd, path = tempfile.mkstemp(suffix=".db", prefix="test_chat_purge_")
+    os.close(fd)
+    try:
+        ch = SQLiteChatHistory(db_path=path, retention_days=0)
+        ch.add_message("sessao-1", "user", "antiga")
+        # Com retenção 0, a próxima escrita apaga a mensagem anterior
+        ch.add_message("sessao-1", "user", "nova")
+        msgs = ch.get_recent_messages("sessao-1")
+        assert len(msgs) == 1
+        assert msgs[0][1] == "nova"
+    finally:
+        os.unlink(path)

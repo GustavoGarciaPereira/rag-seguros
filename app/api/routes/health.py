@@ -56,8 +56,9 @@ async def get_stats(
             "temp_directory": "temp_uploads",
             "service": "Insurance RAG Assistant",
         }
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Erro ao obter estatísticas: {exc}")
+    except Exception:
+        logger.error("Erro ao obter estatísticas", exc_info=True)
+        raise HTTPException(status_code=500, detail="Erro ao obter estatísticas do serviço.")
 
 
 @router.get("/metrics")

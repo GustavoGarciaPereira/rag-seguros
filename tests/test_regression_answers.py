@@ -123,9 +123,11 @@ def _run_test(query_config: Dict[str, Any]) -> bool:
             filter_dict=query_config["filter"],
         )
     except Exception as e:
-        print(f"  ⚠️ API LLM indisponível: {e}")
-        print("  ⏭️ Validação estrutural ignorada (API offline)")
-        return True
+        # NÃO é pass: se a API falhar durante o teste, a validação não foi
+        # executada — o teste deve falhar (falso verde é pior que vermelho).
+        print(f"  ❌ Falha ao executar a query (API indisponível durante o teste): {e}")
+        print("  ⏭️ Validação não executada — rode localmente com a API disponível.")
+        return False
 
     if not answer:
         print("  ERRO: Resposta vazia retornada.")
@@ -212,6 +214,12 @@ def main() -> None:
     print("=" * 70)
     print("  REGRESSION TEST — Qualidade das Respostas (Estrutural)")
     print("=" * 70)
+
+    if not _CAN_REACH_DEEPSEEK:
+        # Skip explícito (não é pass silencioso): a mensagem aparece nos logs do CI
+        print("\n  ⏭️  SKIP: API DeepSeek indisponível (sem chave ou sem conectividade).")
+        print("      Nenhuma validação foi executada. Rode localmente com a API disponível.")
+        sys.exit(0)
 
     all_passed = True
     for query_config in TEST_QUERIES:

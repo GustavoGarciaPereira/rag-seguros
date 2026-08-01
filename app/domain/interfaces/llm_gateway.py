@@ -19,6 +19,7 @@ class LLMGateway(ABC):
         context: List[SearchResult],
         seguradora: Optional[str] = None,
         document_type: Optional[str] = None,
+        ramo: Optional[str] = None,
     ) -> str:
         """Gera resposta estruturada a partir do *context* recuperado."""
         ...
@@ -30,6 +31,7 @@ class LLMGateway(ABC):
         context: List[SearchResult],
         seguradora: Optional[str] = None,
         document_type: Optional[str] = None,
+        ramo: Optional[str] = None,
     ) -> Iterator[str]:
         """Gera resposta em streaming, cedendo cada delta de texto."""
         ...

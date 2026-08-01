@@ -7,6 +7,8 @@ de infraestrutura diretamente.
 import os
 from functools import lru_cache
 
+from app.core.config import settings
+from app.core.rate_limit import RateLimiter
 from app.infrastructure.chunkers.semantic_chunker import InsuranceSemanticChunker
 from app.infrastructure.gateways.deepseek_gateway import DeepSeekGateway
 from app.infrastructure.parsers.pdf_parser import PdfDocumentParser
@@ -59,7 +61,13 @@ def _document_catalog() -> SQLiteDocumentCatalog:
 
 @lru_cache(maxsize=1)
 def _chat_history() -> SQLiteChatHistory:
-    return SQLiteChatHistory()
+    return SQLiteChatHistory(retention_days=settings.chat_retention_days)
+
+
+@lru_cache(maxsize=1)
+def get_rate_limiter() -> RateLimiter:
+    """Rate limiter global (por IP) para endpoints de custo (ex.: /ask)."""
+    return RateLimiter(max_requests=settings.rate_limit_per_minute)
 
 
 # ------------------------------------------------------------------

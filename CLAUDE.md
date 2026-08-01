@@ -5,8 +5,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-# Install dependencies
+# Install dependencies (runtime)
 pip install -r requirements.txt
+
+# Install dev/test dependencies (pytest etc.)
+pip install -r requirements-dev.txt
 
 # Run the server (with dependency/env checks and auto-reload)
 python run.py

@@ -1,0 +1,39 @@
+# Segredos e ambiente local — NUNCA entram na imagem
+.env
+.env.*
+!.env.example
+
+# VCS e ferramentas
+.git/
+.gitignore
+.reasonix/
+reasonix.toml
+.opencode/
+.gk/
+.kilo/
+
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Dados locais (PDFs originais e artefatos)
+pdfs/
+temp_uploads/
+reviews/
+prolog_db/
+test_output_*.txt
+=2.4.0
+
+# Histórico de chat (dados de conversa — não versionar nem embutir na imagem)
+faiss_db/chat_history.db
+faiss_db/chat_history.db-*
+
+# Índice e metadados FAISS ENTRAM na imagem de propósito: o Render free-tier
+# não tem disco persistente e serve o índice commitado no repo.
+faiss_db/*.db-shm
+faiss_db/*.db-wal

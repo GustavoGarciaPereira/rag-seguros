@@ -13,6 +13,16 @@ class Settings(BaseSettings):
     admin_api_key: str = ""
     log_level: str = "INFO"
     enable_upload: str = "true"
+    # Origens CORS permitidas (separadas por vírgula; "*" = qualquer origem)
+    cors_origins: str = "*"
+    # Rate limit por IP para endpoints de custo (ex.: /ask)
+    rate_limit_per_minute: int = 30
+    # True quando o serviço roda atrás de um proxy confiável que injeta
+    # X-Forwarded-For (Render, nginx). Em dev/direto, mantenha False para
+    # o rate limit não ser contornável com header forjado.
+    trust_proxy_headers: bool = True
+    # Dias de retenção do histórico de chat (purge automático na escrita)
+    chat_retention_days: int = 30
 
     @property
     def upload_enabled(self) -> bool:

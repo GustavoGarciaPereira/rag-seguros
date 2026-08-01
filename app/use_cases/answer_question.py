@@ -17,6 +17,10 @@ from app.domain.interfaces.vector_repository import VectorRepository
 
 logger = logging.getLogger("rag")
 
+# Limites do prefixo de histórico injetado no prompt (evita estourar a janela do LLM)
+_MAX_HISTORY_CHARS = 4000
+_MAX_MESSAGE_CHARS = 800
+
 
 def _build_history_prefix(
     chat_history: ChatHistory,
@@ -25,6 +29,9 @@ def _build_history_prefix(
 ) -> str:
     """Monta um prefixo com as últimas *limit* mensagens da sessão.
 
+    O prefixo é limitado em tamanho (``_MAX_HISTORY_CHARS``) e cada mensagem
+    é truncada (``_MAX_MESSAGE_CHARS``) para não inchar o prompt do LLM.
+
     Retorna string vazia se não houver histórico.
     """
     messages = chat_history.get_recent_messages(session_id, limit=limit)
@@ -32,9 +39,17 @@ def _build_history_prefix(
         return ""
 
     lines: List[str] = ["[Histórico recente da conversa]"]
+    total_len = len(lines[0])
     for role, content in messages:
         label = "Usuário" if role == "user" else "Assistente"
-        lines.append(f"{label}: {content}")
+        if len(content) > _MAX_MESSAGE_CHARS:
+            content = content[:_MAX_MESSAGE_CHARS] + "..."
+        line = f"{label}: {content}"
+        if total_len + len(line) > _MAX_HISTORY_CHARS:
+            lines.append("...(histórico truncado por tamanho)")
+            break
+        lines.append(line)
+        total_len += len(line)
     lines.append("")
     lines.append("[Pergunta atual]")
     return "\n".join(lines) + "\n"
@@ -122,11 +137,13 @@ class AskInsuranceQuestion:
 
         # Etapa 3: geração LLM (com histórico se disponível)
         prompt = self._prompt_with_history(session_id, question)
+        ramo = (filter_dict or {}).get("ramo")
         answer = self._llm.generate(
             prompt,
             reranked,
             seguradora=seguradora,
             document_type=document_type,
+            ramo=ramo,
         )
 
         # Etapa 4: salvar no histórico
@@ -177,11 +194,13 @@ class AskInsuranceQuestion:
         )
 
         prompt = self._prompt_with_history(session_id, question)
+        ramo = (filter_dict or {}).get("ramo")
         text_stream = self._llm.generate_stream(
             prompt,
             reranked,
             seguradora=seguradora,
             document_type=document_type,
+            ramo=ramo,
         )
 
         # Wraps the stream so the Q&A pair is persisted after the last token.

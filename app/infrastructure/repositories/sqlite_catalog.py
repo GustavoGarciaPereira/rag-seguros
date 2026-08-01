@@ -15,6 +15,7 @@ Tabela ``documents``:
     created_at  – data/hora da primeira indexação (ISO 8601 UTC)
 """
 import sqlite3
+import threading
 from typing import List, Optional
 
 from app.domain.entities.document import DocumentRecord
@@ -26,6 +27,7 @@ class SQLiteDocumentCatalog(DocumentCatalog):
 
     def __init__(self, db_path: str) -> None:
         self.db_path = db_path
+        self._lock = threading.Lock()
         self._init_db()
 
     # ------------------------------------------------------------------
@@ -35,10 +37,12 @@ class SQLiteDocumentCatalog(DocumentCatalog):
     def _conn(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA busy_timeout=5000")
         return conn
 
     def _init_db(self) -> None:
         with self._conn() as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS documents (
                     doc_id      TEXT    PRIMARY KEY,
@@ -61,23 +65,24 @@ class SQLiteDocumentCatalog(DocumentCatalog):
     # ------------------------------------------------------------------
 
     def register(self, record: DocumentRecord) -> None:
-        with self._conn() as conn:
-            conn.execute(
-                "INSERT OR REPLACE INTO documents "
-                "(doc_id, source_name, file_hash, seguradora, ano, tipo, ramo, chunk_count, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    record.doc_id,
-                    record.source_name,
-                    record.file_hash,
-                    record.seguradora,
-                    record.ano,
-                    record.tipo,
-                    record.ramo,
-                    record.chunk_count,
-                    record.created_at,
-                ),
-            )
+        with self._lock:
+            with self._conn() as conn:
+                conn.execute(
+                    "INSERT OR REPLACE INTO documents "
+                    "(doc_id, source_name, file_hash, seguradora, ano, tipo, ramo, chunk_count, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        record.doc_id,
+                        record.source_name,
+                        record.file_hash,
+                        record.seguradora,
+                        record.ano,
+                        record.tipo,
+                        record.ramo,
+                        record.chunk_count,
+                        record.created_at,
+                    ),
+                )
 
     def find_by_hash(self, file_hash: str) -> Optional[DocumentRecord]:
         with self._conn() as conn:
@@ -89,15 +94,17 @@ class SQLiteDocumentCatalog(DocumentCatalog):
     def update_metadata(
         self, doc_id: str, seguradora: str, ano: int, tipo: str, ramo: str
     ) -> None:
-        with self._conn() as conn:
-            conn.execute(
-                "UPDATE documents SET seguradora=?, ano=?, tipo=?, ramo=? WHERE doc_id=?",
-                (seguradora, ano, tipo, ramo, doc_id),
-            )
+        with self._lock:
+            with self._conn() as conn:
+                conn.execute(
+                    "UPDATE documents SET seguradora=?, ano=?, tipo=?, ramo=? WHERE doc_id=?",
+                    (seguradora, ano, tipo, ramo, doc_id),
+                )
 
     def remove(self, doc_id: str) -> None:
-        with self._conn() as conn:
-            conn.execute("DELETE FROM documents WHERE doc_id = ?", (doc_id,))
+        with self._lock:
+            with self._conn() as conn:
+                conn.execute("DELETE FROM documents WHERE doc_id = ?", (doc_id,))
 
     def list_all(self) -> List[DocumentRecord]:
         with self._conn() as conn:

@@ -11,6 +11,10 @@ class _JsonFormatter(logging.Formatter):
             "level": record.levelname,
             "msg": record.getMessage(),
         }
+        # Campos estruturados via extra={"event_data": {...}} — evita JSON aninhado
+        event_data = getattr(record, "event_data", None)
+        if isinstance(event_data, dict):
+            obj.update(event_data)
         if record.exc_info:
             obj["exc"] = self.formatException(record.exc_info)
         return _json.dumps(obj, ensure_ascii=False)

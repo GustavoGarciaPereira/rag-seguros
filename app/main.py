@@ -10,8 +10,16 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.core.config import settings
 from app.core.dependencies import get_vector_service
 from app.api.routes import ask, conversations, health, inventory, upload
+
+
+def _parse_cors_origins(raw: str) -> list[str]:
+    """Converte 'a.com,b.com' em lista; '*' (ou vazio) = qualquer origem."""
+    origins = [o.strip() for o in raw.split(",") if o.strip()]
+    return origins or ["*"]
+
 
 app = FastAPI(
     title="Multi-Seguradora Insurance RAG Assistant",
@@ -21,9 +29,11 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
+    allow_origins=_parse_cors_origins(settings.cors_origins),
+    # Frontend é same-origin (servido pelo próprio FastAPI) e não usa cookies —
+    # credentials desabilitado evita o comportamento inseguro de refletir origem.
+    allow_credentials=False,
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 

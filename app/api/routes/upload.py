@@ -1,26 +1,51 @@
+import hmac
 import logging
 import os
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
 
-from app.core.config import MAX_FILE_SIZE, TEMP_DIR, settings
+from app.core.config import ALLOWED_SEGURADORAS, MAX_FILE_SIZE, TEMP_DIR, settings
 from app.core.dependencies import get_ingest_use_case
 from app.domain.entities.document import InsuranceMetadata
-from app.domain.entities.insurance import Ramo, Seguradora
+from app.domain.entities.insurance import Ramo
 from app.use_cases.ingest_document import IngestDocument
 
 router = APIRouter()
 logger = logging.getLogger("rag")
 
-_ALLOWED_ADMIN_SEGURADORAS = {s.value for s in Seguradora if s is not Seguradora.DESCONHECIDA}
+_ALLOWED_RAMOS = {r.value for r in Ramo if r is not Ramo.DESCONHECIDO}
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _validate_pdf_bytes(contents: bytes) -> None:
+    """Valida tamanho e assinatura PDF (magic bytes) antes de qualquer ingestão."""
+    if len(contents) > MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Arquivo muito grande. Limite máximo: {MAX_FILE_SIZE // 1024 // 1024}MB",
+        )
+    if not contents.startswith(b"%PDF"):
+        raise HTTPException(
+            status_code=400,
+            detail="Arquivo inválido: o conteúdo não é um PDF (assinatura %PDF ausente).",
+        )
+
+
+def _reject_oversized_request(request: Request) -> None:
+    """Rejeita por Content-Length antes de ler o corpo (evita DoS de leitura)."""
+    content_length = request.headers.get("content-length")
+    if content_length and content_length.isdigit() and int(content_length) > MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Arquivo muito grande. Limite máximo: {MAX_FILE_SIZE // 1024 // 1024}MB",
+        )
 
 
 def _run_ingest(
@@ -29,12 +54,8 @@ def _run_ingest(
     original_filename: str,
     metadata: InsuranceMetadata,
 ) -> int:
-    """Salva temp, indexa e limpa.  Retorna chunks resultantes."""
-    if len(contents) > MAX_FILE_SIZE:
-        raise HTTPException(
-            status_code=413,
-            detail=f"Arquivo muito grande. Limite máximo: {MAX_FILE_SIZE // 1024 // 1024}MB",
-        )
+    """Valida, salva temp, indexa e limpa.  Retorna chunks resultantes."""
+    _validate_pdf_bytes(contents)
     os.makedirs(TEMP_DIR, exist_ok=True)
     temp_path = os.path.join(TEMP_DIR, f"{uuid.uuid4().hex}.pdf")
     try:
@@ -53,6 +74,7 @@ def _run_ingest(
 
 @router.post("/upload")
 async def upload_pdf(
+    request: Request,
     file: UploadFile = File(...),
     seguradora: Optional[str] = Form(None),
     ano: Optional[int] = Form(None),
@@ -67,6 +89,8 @@ async def upload_pdf(
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Apenas arquivos PDF são aceitos")
 
+    _reject_oversized_request(request)
+
     metadata = InsuranceMetadata(
         seguradora=seguradora or "Desconhecida",
         ano=ano or 0,
@@ -75,7 +99,8 @@ async def upload_pdf(
     )
 
     try:
-        contents = await file.read()
+        # Lê no máximo MAX_FILE_SIZE+1 bytes — nunca materializa corpo gigante em RAM
+        contents = await file.read(MAX_FILE_SIZE + 1)
         chunks = _run_ingest(ingest, contents, file.filename, metadata)
         return JSONResponse(
             {
@@ -88,15 +113,17 @@ async def upload_pdf(
         )
     except HTTPException:
         raise
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Erro ao processar PDF: {exc}")
-
-
-_ALLOWED_RAMOS = {r.value for r in Ramo if r is not Ramo.DESCONHECIDO}
+    except Exception:
+        logger.error("Erro ao processar upload público", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail="Erro ao processar o PDF. Verifique se o arquivo é um PDF válido e tente novamente.",
+        )
 
 
 @router.post("/admin/upload")
 async def admin_upload_pdf(
+    request: Request,
     file: UploadFile = File(...),
     seguradora: str = Form(...),
     ano: int = Form(...),
@@ -109,16 +136,18 @@ async def admin_upload_pdf(
     if not settings.upload_enabled:
         raise HTTPException(status_code=403, detail="Upload desabilitado neste ambiente")
 
-    if not settings.admin_api_key or x_admin_key != settings.admin_api_key:
+    if not settings.admin_api_key or not hmac.compare_digest(x_admin_key, settings.admin_api_key):
         raise HTTPException(status_code=401, detail="Chave de administrador inválida ou ausente")
 
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Apenas arquivos PDF são aceitos")
 
-    if seguradora not in _ALLOWED_ADMIN_SEGURADORAS:
+    _reject_oversized_request(request)
+
+    if seguradora not in ALLOWED_SEGURADORAS:
         raise HTTPException(
             status_code=400,
-            detail=f"Seguradora não permitida. Escolha entre: {', '.join(sorted(_ALLOWED_ADMIN_SEGURADORAS))}",
+            detail=f"Seguradora não permitida. Escolha entre: {', '.join(sorted(ALLOWED_SEGURADORAS))}",
         )
 
     ramo_value = ramo or "Desconhecido"
@@ -131,7 +160,7 @@ async def admin_upload_pdf(
     metadata = InsuranceMetadata(seguradora=seguradora, ano=ano, tipo=tipo or "Geral", ramo=ramo_value)
 
     try:
-        contents = await file.read()
+        contents = await file.read(MAX_FILE_SIZE + 1)
         chunks = _run_ingest(ingest, contents, file.filename, metadata)
         return JSONResponse(
             {
@@ -144,5 +173,9 @@ async def admin_upload_pdf(
         )
     except HTTPException:
         raise
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Erro ao processar PDF administrativo: {exc}")
+    except Exception:
+        logger.error("Erro ao processar upload administrativo", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail="Erro ao processar o PDF. Verifique se o arquivo é um PDF válido e tente novamente.",
+        )

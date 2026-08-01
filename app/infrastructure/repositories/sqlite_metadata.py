@@ -9,14 +9,20 @@ Responsabilidades:
 - Fornecer migração automática a partir do pickle legado na primeira carga.
 """
 import sqlite3
+import threading
 from typing import Any, Dict, List, Optional, Tuple
 
 
 class SQLiteMetadataStore:
-    """Store leve de metadados de chunks, sem dependências externas."""
+    """Store leve de metadados de chunks, sem dependências externas.
+
+    Thread-safe para escritas via lock interno + ``BEGIN IMMEDIATE``
+    (SELECT MAX + INSERT atômicos — evita faiss_pos duplicados).
+    """
 
     def __init__(self, db_path: str) -> None:
         self.db_path = db_path
+        self._lock = threading.Lock()
         self._init_db()
 
     # ------------------------------------------------------------------
@@ -26,10 +32,12 @@ class SQLiteMetadataStore:
     def _conn(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA busy_timeout=5000")
         return conn
 
     def _init_db(self) -> None:
         with self._conn() as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS chunks (
                     faiss_pos   INTEGER NOT NULL,
@@ -64,33 +72,36 @@ class SQLiteMetadataStore:
         """
         if not entries:
             return
-        with self._conn() as conn:
-            row = conn.execute(
-                "SELECT COALESCE(MAX(faiss_pos) + 1, 0) FROM chunks"
-            ).fetchone()
-            next_pos: int = row[0]
+        with self._lock:
+            with self._conn() as conn:
+                # Transação imediata: SELECT MAX + INSERT atômicos (faiss_pos únicos)
+                conn.execute("BEGIN IMMEDIATE")
+                row = conn.execute(
+                    "SELECT COALESCE(MAX(faiss_pos) + 1, 0) FROM chunks"
+                ).fetchone()
+                next_pos: int = row[0]
 
-            rows = [
-                (
-                    next_pos + i,
-                    meta["doc_id"],
-                    text,
-                    meta.get("source", ""),
-                    meta.get("page", 0),
-                    meta.get("seguradora", "Desconhecida"),
-                    meta.get("ano", 0),
-                    meta.get("tipo", "Geral"),
-                    meta.get("ramo", "Desconhecido"),
-                    meta.get("chunk_index", 0),
+                rows = [
+                    (
+                        next_pos + i,
+                        meta["doc_id"],
+                        text,
+                        meta.get("source", ""),
+                        meta.get("page", 0),
+                        meta.get("seguradora", "Desconhecida"),
+                        meta.get("ano", 0),
+                        meta.get("tipo", "Geral"),
+                        meta.get("ramo", "Desconhecido"),
+                        meta.get("chunk_index", 0),
+                    )
+                    for i, (text, meta) in enumerate(entries)
+                ]
+                conn.executemany(
+                    "INSERT INTO chunks "
+                    "(faiss_pos, doc_id, text, source, page, seguradora, ano, tipo, ramo, chunk_index) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    rows,
                 )
-                for i, (text, meta) in enumerate(entries)
-            ]
-            conn.executemany(
-                "INSERT INTO chunks "
-                "(faiss_pos, doc_id, text, source, page, seguradora, ano, tipo, ramo, chunk_index) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                rows,
-            )
 
     # ------------------------------------------------------------------
     # Read
@@ -132,11 +143,12 @@ class SQLiteMetadataStore:
         Returns:
             True se ao menos um chunk foi atualizado.
         """
-        with self._conn() as conn:
-            cursor = conn.execute(
-                "UPDATE chunks SET seguradora=?, ano=?, tipo=?, ramo=? WHERE doc_id=?",
-                (seguradora, ano, tipo, ramo, doc_id),
-            )
+        with self._lock:
+            with self._conn() as conn:
+                cursor = conn.execute(
+                    "UPDATE chunks SET seguradora=?, ano=?, tipo=?, ramo=? WHERE doc_id=?",
+                    (seguradora, ano, tipo, ramo, doc_id),
+                )
         return cursor.rowcount > 0
 
     # ------------------------------------------------------------------
@@ -152,29 +164,30 @@ class SQLiteMetadataStore:
         Returns:
             (removed_count, remaining_texts_in_new_faiss_order)
         """
-        with self._conn() as conn:
-            removed: int = conn.execute(
-                "SELECT COUNT(*) FROM chunks WHERE doc_id = ?", (doc_id,)
-            ).fetchone()[0]
+        with self._lock:
+            with self._conn() as conn:
+                removed: int = conn.execute(
+                    "SELECT COUNT(*) FROM chunks WHERE doc_id = ?", (doc_id,)
+                ).fetchone()[0]
 
-            if removed == 0:
-                return 0, []
+                if removed == 0:
+                    return 0, []
 
-            # Captura textos restantes na ordem original (faiss_pos ASC)
-            remaining_rows = conn.execute(
-                "SELECT rowid, text FROM chunks WHERE doc_id != ? ORDER BY faiss_pos",
-                (doc_id,),
-            ).fetchall()
+                # Captura textos restantes na ordem original (faiss_pos ASC)
+                remaining_rows = conn.execute(
+                    "SELECT rowid, text FROM chunks WHERE doc_id != ? ORDER BY faiss_pos",
+                    (doc_id,),
+                ).fetchall()
 
-            # Remove o documento
-            conn.execute("DELETE FROM chunks WHERE doc_id = ?", (doc_id,))
+                # Remove o documento
+                conn.execute("DELETE FROM chunks WHERE doc_id = ?", (doc_id,))
 
-            # Renumera: cada chunk restante recebe o seu novo índice no FAISS
-            if remaining_rows:
-                conn.executemany(
-                    "UPDATE chunks SET faiss_pos = ? WHERE rowid = ?",
-                    [(new_pos, row["rowid"]) for new_pos, row in enumerate(remaining_rows)],
-                )
+                # Renumera: cada chunk restante recebe o seu novo índice no FAISS
+                if remaining_rows:
+                    conn.executemany(
+                        "UPDATE chunks SET faiss_pos = ? WHERE rowid = ?",
+                        [(new_pos, row["rowid"]) for new_pos, row in enumerate(remaining_rows)],
+                    )
 
         return removed, [row["text"] for row in remaining_rows]
 
@@ -185,8 +198,9 @@ class SQLiteMetadataStore:
         re-indexação completa.  O próximo ``insert_many`` partirá de
         ``faiss_pos = 0`` automaticamente (``COALESCE(MAX+1, 0)``).
         """
-        with self._conn() as conn:
-            conn.execute("DELETE FROM chunks")
+        with self._lock:
+            with self._conn() as conn:
+                conn.execute("DELETE FROM chunks")
 
     # ------------------------------------------------------------------
     # Migration from legacy pickle

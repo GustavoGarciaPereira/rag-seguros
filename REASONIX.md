@@ -5,8 +5,11 @@ Projeto RAG (Retrieval-Augmented Generation) para análise de manuais de seguros
 ## Comandos
 
 ```bash
-# Instalar dependências
+# Instalar dependências (runtime)
 pip install -r requirements.txt
+
+# Instalar dependências de desenvolvimento/teste (pytest etc.)
+pip install -r requirements-dev.txt
 
 # Rodar servidor com auto-reload
 python run.py
@@ -178,7 +181,7 @@ Sistema de histórico de conversas com sessões identificadas por UUID.
 4. Use case injeta as últimas 10 mensagens (5 trocas) no prompt do LLM
 5. Após o stream terminar, pergunta + resposta são persistidas
 
-**Persistência:** `SQLiteChatHistory` em `faiss_db/chat_history.db` (separado do `metadata.db`).
+**Persistência:** `SQLiteChatHistory` em `faiss_db/chat_history.db` (separado do `metadata.db`; **não versionado no git** — conversas são dados, não código).
 Tabela `messages`: `id`, `session_id`, `role` (`user`|`assistant`), `content`, `created_at`.
 
 **Truncagem:** Por quantidade (últimas 10 mensagens), sem contagem de tokens.

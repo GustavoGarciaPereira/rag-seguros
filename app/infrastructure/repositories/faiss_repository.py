@@ -11,6 +11,7 @@ Fluxo interno:
 """
 import logging
 import os
+import threading
 from typing import Any, Dict, List, Optional
 
 import faiss
@@ -24,7 +25,12 @@ logger = logging.getLogger("rag")
 
 
 class FAISSVectorRepository(VectorRepository):
-    """Implementação FAISS + SQLite do repositório vetorial."""
+    """Implementação FAISS + SQLite do repositório vetorial.
+
+    Thread-safe para mutações via ``threading.Lock`` (as rotas sync do FastAPI
+    rodam em thread pool — ``add``/``delete``/``delete_all`` concorrentes
+    compartilhariam o índice sem proteção).
+    """
 
     EMBEDDING_MODEL = "all-MiniLM-L6-v2"
     EMBEDDING_DIM = 384
@@ -34,6 +40,7 @@ class FAISSVectorRepository(VectorRepository):
         os.makedirs(persist_directory, exist_ok=True)
 
         self._embedding_model: Optional[SentenceTransformer] = None
+        self._lock = threading.Lock()
 
         self.index_path = os.path.join(persist_directory, "faiss_index.bin")
         db_path = os.path.join(persist_directory, "metadata.db")
@@ -66,6 +73,15 @@ class FAISSVectorRepository(VectorRepository):
         """Pré-carrega o modelo de embeddings.  Chamado no startup do FastAPI."""
         _ = self.embedding_model.encode("warm up")
 
+    def _write_index(self) -> None:
+        """Persiste o índice em disco de forma atômica (temp + os.replace).
+
+        Evita corromper ``faiss_index.bin`` se a escrita falhar no meio.
+        """
+        tmp_path = self.index_path + ".tmp"
+        faiss.write_index(self.index, tmp_path)
+        os.replace(tmp_path, self.index_path)
+
     # ------------------------------------------------------------------
     # VectorRepository interface
     # ------------------------------------------------------------------
@@ -73,27 +89,28 @@ class FAISSVectorRepository(VectorRepository):
     def add(self, chunks: List[Chunk]) -> None:
         if not chunks:
             return
-        texts = [c.text for c in chunks]
-        entries = [
-            (
-                c.text,
-                {
-                    "doc_id": c.document_id,
-                    "source": c.source,
-                    "page": c.page,
-                    "seguradora": c.metadata.seguradora,
-                    "ano": c.metadata.ano,
-                    "tipo": c.metadata.tipo,
-                    "ramo": c.metadata.ramo,
-                    "chunk_index": c.chunk_index,
-                },
-            )
-            for c in chunks
-        ]
-        embeddings = self.embedding_model.encode(texts).astype("float32")
-        self.index.add(embeddings)
-        self._meta.insert_many(entries)
-        faiss.write_index(self.index, self.index_path)
+        with self._lock:
+            texts = [c.text for c in chunks]
+            entries = [
+                (
+                    c.text,
+                    {
+                        "doc_id": c.document_id,
+                        "source": c.source,
+                        "page": c.page,
+                        "seguradora": c.metadata.seguradora,
+                        "ano": c.metadata.ano,
+                        "tipo": c.metadata.tipo,
+                        "ramo": c.metadata.ramo,
+                        "chunk_index": c.chunk_index,
+                    },
+                )
+                for c in chunks
+            ]
+            embeddings = self.embedding_model.encode(texts).astype("float32")
+            self.index.add(embeddings)
+            self._meta.insert_many(entries)
+            self._write_index()
 
     def search(
         self,
@@ -154,18 +171,19 @@ class FAISSVectorRepository(VectorRepository):
         return results
 
     def delete(self, document_id: str) -> int:
-        removed, remaining_texts = self._meta.delete_document(document_id)
-        if removed == 0:
-            return 0
+        with self._lock:
+            removed, remaining_texts = self._meta.delete_document(document_id)
+            if removed == 0:
+                return 0
 
-        # Reconstrói o índice FAISS sem os chunks removidos
-        self.index = faiss.IndexFlatL2(self.EMBEDDING_DIM)
-        if remaining_texts:
-            embeddings = self.embedding_model.encode(remaining_texts).astype("float32")
-            self.index.add(embeddings)
+            # Reconstrói o índice FAISS sem os chunks removidos
+            self.index = faiss.IndexFlatL2(self.EMBEDDING_DIM)
+            if remaining_texts:
+                embeddings = self.embedding_model.encode(remaining_texts).astype("float32")
+                self.index.add(embeddings)
 
-        faiss.write_index(self.index, self.index_path)
-        return removed
+            self._write_index()
+            return removed
 
     def delete_all(self) -> int:
         """Apaga todos os chunks do índice FAISS e da tabela SQLite.
@@ -178,10 +196,11 @@ class FAISSVectorRepository(VectorRepository):
         Returns:
             Número de chunks removidos.
         """
-        removed = self._meta.count()
-        self.index = faiss.IndexFlatL2(self.EMBEDDING_DIM)
-        self._meta.truncate_all()
-        faiss.write_index(self.index, self.index_path)
+        with self._lock:
+            removed = self._meta.count()
+            self.index = faiss.IndexFlatL2(self.EMBEDDING_DIM)
+            self._meta.truncate_all()
+            self._write_index()
         logger.info("delete_all: %d chunk(s) removidos do índice.", removed)
         return removed
 

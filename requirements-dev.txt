@@ -1,0 +1,4 @@
+# Dependências de desenvolvimento/teste (não entram na imagem Docker)
+-r requirements.txt
+pytest-cov>=5.0.0
+pytest-timeout>=2.3.0
